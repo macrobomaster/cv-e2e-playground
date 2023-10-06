@@ -1,0 +1,23 @@
+# nix stuff
+.direnv/
+result
+
+# python stuff
+.venv/
+__pycache__/
+build/
+*.so
+
+# ignore model weights
+weights/
+*.pth
+*.pkl
+*.pkl.json
+*.bin
+*.safetensors
+
+# ignore training data
+*.npy
+
+# wandb
+wandb
