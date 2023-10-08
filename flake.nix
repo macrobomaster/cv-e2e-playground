@@ -65,6 +65,10 @@
                 pydot
                 tinygrad
                 torch
+                (opencv4.override {
+                   enableGtk3 = true;
+                })
+                wandb
               ];
             python = pkgs.python311;
           in
