@@ -36,6 +36,9 @@ def get_foundation():
 
 
 if __name__ == "__main__":
+    Tensor.no_grad = True
+    Tensor.training = False
+
     # cap_queue = Queue(4)
     # cap = ThreadedCapture(cap_queue, 1)
     # cap.start()
