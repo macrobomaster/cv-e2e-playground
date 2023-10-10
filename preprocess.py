@@ -1,6 +1,7 @@
 import glob
 from pathlib import Path
 import random
+import os
 
 import cv2
 from tqdm import tqdm
@@ -10,6 +11,10 @@ from tinygrad.jit import TinyJit
 from tinygrad.nn.state import safe_save
 
 from main import get_foundation
+from train import BASE_PATH
+
+
+RANDOM_TRANSLATE_COUNT = 7
 
 
 foundation = get_foundation()
@@ -60,7 +65,7 @@ def add_to_batch(x_b, y_b, detected, img, x, y):
     y_b.append(Tensor([detected, x, y]))
 
 
-train_files = glob.glob("annotated/*.png")
+train_files = glob.glob(str(BASE_PATH / "annotated/*.png"))
 print(f"there are {len(train_files)} frames")
 
 
@@ -90,7 +95,7 @@ def get_train_data():
 
         # augment
         # random translate and pad
-        for _ in range(7):
+        for _ in range(RANDOM_TRANSLATE_COUNT):
             add_to_batch(
                 x_b, y_b, detected, *random_translate(img_left, x_left, y_left)
             )
@@ -112,4 +117,4 @@ def get_train_data():
 
 
 for i, (x, y) in enumerate(tqdm(get_train_data(), total=len(train_files))):
-    safe_save({"x": x, "y": y}, f"preprocessed/{i}.safetensors")
+    safe_save({"x": x, "y": y}, str(BASE_PATH / f"preprocessed/{i}.safetensors"))

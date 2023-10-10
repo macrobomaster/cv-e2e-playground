@@ -1,6 +1,8 @@
 import glob
 import math
 import random
+from pathlib import Path
+import os
 
 from tinygrad.tensor import Tensor
 from tinygrad.jit import TinyJit
@@ -18,6 +20,8 @@ import wandb
 
 from model import Head
 
+
+BASE_PATH = Path(os.environ.get("BASE_PATH", "./"))
 
 WARMUP_STEPS = 20
 START_LR = 0.002
@@ -53,8 +57,8 @@ def get_minibatch(size=4):
     for _ in range(size):
         data = random.choice(preprocessed_train_data)
         sel = random.randint(0, data["y"].shape[0] - 1)  # type: ignore
-        x_b.append(data["x"].to("cpu")[sel:sel+1])
-        y_b.append(data["y"].to("cpu")[sel:sel+1])
+        x_b.append(data["x"].to("cpu")[sel : sel + 1])
+        y_b.append(data["y"].to("cpu")[sel : sel + 1])
     return Tensor.cat(*x_b).to("gpu"), Tensor.cat(*y_b).to("gpu")
 
 
