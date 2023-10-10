@@ -13,18 +13,18 @@ from tinygrad.nn.state import (
     safe_save,
 )
 from tqdm import trange
-
+import numpy as np
 import wandb
 
 from model import Head
 from main import BASE_PATH
 
 
-WARMUP_STEPS = 20
+WARMUP_STEPS = 40
 START_LR = 0.002
 END_LR = 0.00001
-EPOCHS = 100
-STEPS = 200
+EPOCHS = 1000
+STEPS = 400
 
 
 def loss_fn(pred, y):
@@ -45,18 +45,19 @@ def train_step(x, y, lr):
     return loss.realize()
 
 
-preprocessed_train_files = glob.glob(str(BASE_PATH / "preprocessed/*.safetensors"))
-preprocessed_train_data = [safe_load(f) for f in preprocessed_train_files]
+preprocessed_train_files = glob.glob(str(BASE_PATH / "preprocessed/*.npz"))
+preprocessed_train_data = [np.load(file) for file in preprocessed_train_files]
+preprocessed_batch_size = preprocessed_train_data[0]["y"].shape[0]
 
 
 def get_minibatch(size=4):
     x_b, y_b = [], []
     for _ in range(size):
         data = random.choice(preprocessed_train_data)
-        sel = random.randint(0, data["y"].shape[0] - 1)  # type: ignore
-        x_b.append(data["x"].to("cpu")[sel : sel + 1])
-        y_b.append(data["y"].to("cpu")[sel : sel + 1])
-    return Tensor.cat(*x_b).to("gpu"), Tensor.cat(*y_b).to("gpu")
+        sel = random.randint(0, preprocessed_batch_size - 1)  # type: ignore
+        x_b.append(data["x"][sel])
+        y_b.append(data["y"][sel])
+    return Tensor(np.stack(x_b)), Tensor(np.stack(y_b))
 
 
 if __name__ == "__main__":

@@ -4,10 +4,10 @@ import random
 
 import cv2
 from tqdm import tqdm
+import numpy as np
 
 from tinygrad.tensor import Tensor
 from tinygrad.jit import TinyJit
-from tinygrad.nn.state import safe_save
 
 from main import get_foundation
 from train import BASE_PATH
@@ -53,12 +53,13 @@ def random_translate(img, x, y):
 def add_to_batch(x_b, y_b, detected, img, x, y):
     if x < 0 or x >= 640 or y < 0 or y >= 480:
         detected = 0
-    if not detected:
-        x, y = 0, 0
 
     # scale between -1 and 1
     x = (x - 320) / 320
     y = (y - 240) / 240
+
+    if not detected:
+        x, y = 0, 0
 
     x_b.append(Tensor(img).reshape(480, 640, 3))
     y_b.append(Tensor([detected, x, y]))
@@ -116,4 +117,4 @@ def get_train_data():
 
 
 for i, (x, y) in enumerate(tqdm(get_train_data(), total=len(train_files))):
-    safe_save({"x": x, "y": y}, str(BASE_PATH / f"preprocessed/{i}.safetensors"))
+    np.savez(str(BASE_PATH / f"preprocessed/{i}.npz"), x=x.numpy(), y=y.numpy())

@@ -21,6 +21,7 @@ annotated/
 data/
 processed/
 *.mp4
+*.npz
 
 # wandb
 wandb

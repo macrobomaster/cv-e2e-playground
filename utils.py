@@ -1,8 +1,8 @@
 from pathlib import Path
 from tqdm import tqdm
 import requests
-import tempfile
 import sys
+import tempfile
 
 
 def download_file(url, fp, skip_if_exists=True):

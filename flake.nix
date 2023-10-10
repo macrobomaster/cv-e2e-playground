@@ -60,8 +60,6 @@
               };
             in
               with p; [
-                llvmlite
-                mypy
                 pydot
                 tinygrad
                 torch

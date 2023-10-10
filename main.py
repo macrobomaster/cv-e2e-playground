@@ -59,7 +59,7 @@ if __name__ == "__main__":
     def pred(img):
         return head(foundation(img))[0].realize()
 
-    cap = cv2.VideoCapture("2743.mp4")
+    cap = cv2.VideoCapture("2744.mp4")
 
     while True:
         # frame = cap_queue.get()
