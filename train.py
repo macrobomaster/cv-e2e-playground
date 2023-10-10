@@ -20,17 +20,17 @@ from model import Head
 from main import BASE_PATH
 
 
-WARMUP_STEPS = 40
+WARMUP_STEPS = 20
 START_LR = 0.002
 END_LR = 0.00001
-EPOCHS = 1000
-STEPS = 400
+EPOCHS = 200
+STEPS = 200
 
 
 def loss_fn(pred, y):
     detected_loss = (pred[:, 0] - y[:, 0]).pow(2).sum()
-    x_loss = (pred[:, 1] - y[:, 1]).mul(pred[:, 0] + y[:, 0] + 1).pow(2).sum()
-    y_loss = (pred[:, 2] - y[:, 2]).mul(pred[:, 0] + y[:, 0] + 1).pow(2).sum()
+    x_loss = (pred[:, 1] - y[:, 1]).mul(pred[:, 0] + y[:, 0] + 0.5).pow(2).sum()
+    y_loss = (pred[:, 2] - y[:, 2]).mul(pred[:, 0] + y[:, 0] + 0.5).pow(2).sum()
     return detected_loss + x_loss + y_loss
 
 
@@ -55,8 +55,12 @@ def get_minibatch(size=4):
     for _ in range(size):
         data = random.choice(preprocessed_train_data)
         sel = random.randint(0, preprocessed_batch_size - 1)  # type: ignore
-        x_b.append(data["x"][sel])
-        y_b.append(data["y"][sel])
+        try:
+            x_b.append(data["x"][sel])
+            y_b.append(data["y"][sel])
+        except:
+            print(sel)
+            exit(1)
     return Tensor(np.stack(x_b)), Tensor(np.stack(y_b))
 
 
