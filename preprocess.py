@@ -103,12 +103,6 @@ def get_train_data():
                 x_b, y_b, detected, *random_translate(img_right, x_right, y_right)
             )
 
-        # final step for augment is to generate flips
-        for i in range(len(x_b)):
-            x_b.append(x_b[i][:, ::-1])
-            detected, x, y = y_b[i].numpy()
-            y_b.append(Tensor([detected, -x, y]))
-
         # batch
         x = Tensor.stack(x_b, dim=0)
         y = Tensor.stack(y_b, dim=0)
