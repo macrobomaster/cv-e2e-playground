@@ -1,8 +1,6 @@
 import glob
 import math
 import random
-from pathlib import Path
-import os
 
 from tinygrad.tensor import Tensor
 from tinygrad.jit import TinyJit
@@ -19,9 +17,8 @@ from tqdm import trange
 import wandb
 
 from model import Head
+from main import BASE_PATH
 
-
-BASE_PATH = Path(os.environ.get("BASE_PATH", "./"))
 
 WARMUP_STEPS = 20
 START_LR = 0.002
@@ -48,7 +45,7 @@ def train_step(x, y, lr):
     return loss.realize()
 
 
-preprocessed_train_files = glob.glob("preprocessed/*.safetensors")
+preprocessed_train_files = glob.glob(str(BASE_PATH / "preprocessed/*.safetensors"))
 preprocessed_train_data = [safe_load(f) for f in preprocessed_train_files]
 
 
@@ -114,4 +111,4 @@ if __name__ == "__main__":
                 }
             )
 
-        safe_save(get_state_dict(head), f"model.safetensors")
+        safe_save(get_state_dict(head), str(BASE_PATH / f"model.safetensors"))

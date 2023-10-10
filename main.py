@@ -1,6 +1,7 @@
 from pathlib import Path
 from multiprocessing import Queue
 import time
+import os
 
 import cv2
 from tinygrad.tensor import Tensor
@@ -11,6 +12,9 @@ from yolov8 import get_variant_multiples, Darknet, Yolov8NECK
 from capture_and_display import ThreadedCapture, ThreadedOutput
 from model import Head
 from utils import download_file
+
+
+BASE_PATH = Path(os.environ.get("BASE_PATH", "./"))
 
 
 def get_foundation():
@@ -49,7 +53,7 @@ if __name__ == "__main__":
 
     foundation = get_foundation()
     head = Head()
-    load_state_dict(head, safe_load("model.safetensors"))
+    load_state_dict(head, safe_load(str(BASE_PATH / "model.safetensors")))
 
     @TinyJit
     def pred(img):

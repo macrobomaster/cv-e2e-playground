@@ -2,7 +2,9 @@ import cv2
 import glob
 from pathlib import Path
 
-frame_files = glob.glob("data/*.png")
+from main import BASE_PATH
+
+frame_files = glob.glob(str(BASE_PATH / "data/*.png"))
 print(f"there are {len(frame_files)} frames")
 
 oframe, frame = None, None
