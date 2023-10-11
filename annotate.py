@@ -57,7 +57,7 @@ elif stage == 1:
     i = 0
     flag = False
     while not flag and i < len(frame_files):
-        print(f"annotating frame color {i} of {len(frame_files)}")
+        print(f"annotating color of frame {i} of {len(frame_files)}")
         frame_file = frame_files[i]
         frame = cv2.imread(frame_file)
         cv2.imshow("preview", frame)
@@ -68,7 +68,12 @@ elif stage == 1:
                 flag = True
                 break
             elif key == ord("s"):
-                continue
+                with open(Path(frame_file).with_suffix(".txt"), "r") as f:
+                    line = f.readline().split(" ")
+                    detected, x, y = int(line[0]), int(line[1]), int(line[2])
+                with open(Path(frame_file).with_suffix(".txt"), "w") as f:
+                    f.write(f"{detected} {x} {y} -1")
+                break
             elif key == ord("r"):
                 with open(Path(frame_file).with_suffix(".txt"), "r") as f:
                     line = f.readline().split(" ")
@@ -87,3 +92,39 @@ elif stage == 1:
                 i -= 2
                 break
         i += 1
+elif stage == 2:
+    frame_files = glob.glob(str(BASE_PATH / "annotated/*.png"))
+    print(f"there are {len(frame_files)} frames")
+
+    i = 0
+    flag = False
+    while not flag and i < len(frame_files):
+        print(f"annotating number of frame {i} of {len(frame_files)}")
+        frame_file = frame_files[i]
+        frame = cv2.imread(frame_file)
+        cv2.imshow("preview", frame)
+
+        while True:
+            key = cv2.waitKey(0)
+            if key == ord("q"):
+                flag = True
+                break
+            elif key == ord("s"):
+                with open(Path(frame_file).with_suffix(".txt"), "r") as f:
+                    line = f.readline().split(" ")
+                    detected, x, y, color = int(line[0]), int(line[1]), int(line[2]), int(line[3])
+                with open(Path(frame_file).with_suffix(".txt"), "w") as f:
+                    f.write(f"{detected} {x} {y} {color} -1")
+                break
+            elif key == ord("3"):
+                with open(Path(frame_file).with_suffix(".txt"), "r") as f:
+                    line = f.readline().split(" ")
+                    detected, x, y, color = int(line[0]), int(line[1]), int(line[2]), int(line[3])
+                with open(Path(frame_file).with_suffix(".txt"), "w") as f:
+                    f.write(f"{detected} {x} {y} {color} 3")
+                break
+            elif key == ord("d"):
+                i -= 2
+                break
+        i += 1
+
