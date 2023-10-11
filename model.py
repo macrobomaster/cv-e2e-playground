@@ -23,6 +23,6 @@ class Head:
 
     def __call__(self, x: Tensor):
         x = self.c1(x)
-        x = self.c_out(x).gelu()
-        x = x.mean((2, 3))
+        x = self.c_out(x)
+        x = x.max((2, 3))
         return self.l_out(x)
