@@ -13,7 +13,7 @@ from main import get_foundation
 from train import BASE_PATH
 
 
-RANDOM_TRANSLATE_COUNT = 7
+RANDOM_TRANSLATE_COUNT = 4
 
 
 foundation = get_foundation()
@@ -50,7 +50,7 @@ def random_translate(img, x, y):
     return img, x, y
 
 
-def add_to_batch(x_b, y_b, detected, img, x, y):
+def add_to_batch(x_b, y_b, detected, color, img, x, y):
     if x < 0 or x >= 640 or y < 0 or y >= 480:
         detected = 0
 
@@ -62,7 +62,7 @@ def add_to_batch(x_b, y_b, detected, img, x, y):
         x, y = 0, 0
 
     x_b.append(Tensor(img).reshape(480, 640, 3))
-    y_b.append(Tensor([detected, x, y]))
+    y_b.append(Tensor([detected, x, y, color]))
 
 
 train_files = glob.glob(str(BASE_PATH / "annotated/*.png"))
@@ -80,9 +80,8 @@ def get_train_data():
 
         # load y
         with open(Path(frame_file).with_suffix(".txt"), "r") as f:
-            line = f.readline()
-            line = line.split(" ")
-            detected, x, y = int(line[0]), int(line[1]), int(line[2])
+            line = f.readline().split(" ")
+            detected, x, y, color = int(line[0]), int(line[1]), int(line[2]), int(line[3])
 
         # offset for crop
         x_left, x_right = x - 212, x
@@ -90,18 +89,23 @@ def get_train_data():
 
         # add initial imgs
         x_b, y_b = [], []
-        add_to_batch(x_b, y_b, detected, img_left, x_left, y_left)
-        add_to_batch(x_b, y_b, detected, img_right, x_right, y_right)
+        add_to_batch(x_b, y_b, detected, color, img_left, x_left, y_left)
+        add_to_batch(x_b, y_b, detected, color, img_right, x_right, y_right)
 
         # augment
         # random translate and pad
         for _ in range(RANDOM_TRANSLATE_COUNT):
             add_to_batch(
-                x_b, y_b, detected, *random_translate(img_left, x_left, y_left)
+                x_b, y_b, detected, color, *random_translate(img_left, x_left, y_left)
             )
             add_to_batch(
-                x_b, y_b, detected, *random_translate(img_right, x_right, y_right)
+                x_b, y_b, detected, color, *random_translate(img_right, x_right, y_right)
             )
+
+        # flip color
+        for _ in range(3):
+            add_to_batch(x_b, y_b, 0, 1 - color, img_left, 0, 0)
+            add_to_batch(x_b, y_b, 0, 1 - color, img_right, 0, 0)
 
         # batch
         x = Tensor.stack(x_b, dim=0)

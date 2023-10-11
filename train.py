@@ -36,7 +36,7 @@ def loss_fn(pred, y):
 
 @TinyJit
 def train_step(x, y, lr):
-    pred = head(x)
+    pred = head(x, y[:, 3].unsqueeze(1))
     loss = loss_fn(pred, y)
     optim.lr.assign(lr + 0.00001 - 0.00001).realize()
     optim.zero_grad()

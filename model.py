@@ -1,4 +1,4 @@
-from tinygrad.nn import Conv2d, Linear
+from tinygrad.nn import Conv2d, Linear, Embedding
 from tinygrad.tensor import Tensor
 
 
@@ -19,10 +19,13 @@ class Head:
     def __init__(self):
         self.c1 = ConvBlock(512, 256)
         self.c_out = Conv2d(256, 512, kernel_size=3, bias=False)
-        self.l_out = Linear(512, 3, bias=False)
+        self.color = Embedding(2, 512)
+        self.joint = Linear(512 * 2, 512)
+        self.l_out = Linear(512, 4, bias=False)
 
-    def __call__(self, x: Tensor):
+    def __call__(self, x: Tensor, color: Tensor):
         x = self.c1(x)
         x = self.c_out(x)
         x = x.max((2, 3))
+        x = self.joint(x.cat(self.color(color).reshape(x.shape[0], x.shape[1]), dim=1)).gelu()
         return self.l_out(x)

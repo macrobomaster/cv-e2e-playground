@@ -12,6 +12,7 @@ from yolov8 import get_variant_multiples, Darknet, Yolov8NECK
 from capture_and_display import ThreadedCapture, ThreadedOutput
 from model import Head
 from utils import download_file
+from smoother import Smoother
 
 
 BASE_PATH = Path(os.environ.get("BASE_PATH", "./"))
@@ -54,26 +55,33 @@ if __name__ == "__main__":
     foundation = get_foundation()
     head = Head()
     load_state_dict(head, safe_load(str(BASE_PATH / "model.safetensors")))
+    smoother_x, smoother_y = Smoother(), Smoother()
 
     @TinyJit
-    def pred(img):
-        return head(foundation(img))[0].realize()
+    def pred(img, color):
+        return head(foundation(img), color)[0].realize()
 
-    cap = cv2.VideoCapture("2744.mp4")
+    cap = cv2.VideoCapture("2743.mp4")
 
+    color = "red"
     while True:
+        st = time.perf_counter()
         # frame = cap_queue.get()
 
         ret, frame = cap.read()
+        if not ret:
+            break
         # convert to rgb
         frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
         frame = frame[:, 106:746]
 
         img = Tensor(frame).reshape(1, 480, 640, 3)
-        x = pred(img)
+        x = pred(img, Tensor([[0]]) if color == "red" else Tensor([[1]]))
 
         # show detection
-        detected, x, y = x.numpy()
+        detected, x, y, _ = x.numpy()
+        dt = time.perf_counter() - st
+        x, y = smoother_x.update(x, dt), smoother_y.update(y, dt)
         print(detected, x, y)
         if detected > 0.5:
             print(f"detected at {x}, {y}")
@@ -81,8 +89,19 @@ if __name__ == "__main__":
             x = x * 320 + 320
             y = y * 240 + 240
             cv2.circle(frame, (int(x), int(y)), 10, (0, 50, 255), -1)
+            cv2.putText(frame, f"{int(x)}, {int(y)}", (int(x), int(y)), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (55, 250, 55), 2)
 
+        if color == "red":
+            cv2.putText(frame, "detecting red", (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 1, (55, 250, 55), 2)
+        elif color == "blue":
+            cv2.putText(frame, "detecting blue", (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 1, (55, 250, 55), 2)
         cv2.imshow("preview", cv2.cvtColor(frame, cv2.COLOR_RGB2BGR))
-        cv2.waitKey(1)
+        key = cv2.waitKey(1)
+        if key == ord("q"):
+            break
+        elif key == ord("r"):
+            color = "red"
+        elif key == ord("b"):
+            color = "blue"
 
         time.sleep(0.05)
