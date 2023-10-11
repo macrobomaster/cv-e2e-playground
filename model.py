@@ -27,5 +27,6 @@ class Head:
         x = self.c1(x)
         x = self.c_out(x)
         x = x.max((2, 3))
-        x = self.joint(x.cat(self.color(color).reshape(x.shape[0], x.shape[1]), dim=1)).leakyrelu()
+        color = self.color(color).reshape(x.shape[0], x.shape[1])
+        x = self.joint(x.cat(color, dim=1)).leakyrelu()
         return self.l_out(x)
