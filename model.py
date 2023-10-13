@@ -43,6 +43,6 @@ class Head:
 
     def __call__(self, x: Tensor, color: Tensor):
         x = self.conv_emb(x)
-        color = self.color_emb(color).reshape(x.shape[0], x.shape[1])
+        color = self.color_emb(color)[:, 0, :]
         x = self.joint(x.cat(color, dim=1)).leakyrelu()
         return self.l_out(x)
