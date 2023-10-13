@@ -8,9 +8,9 @@ import numpy as np
 
 from tinygrad.tensor import Tensor
 from tinygrad.jit import TinyJit
+from tinygrad.helpers import getenv
 
-from main import get_foundation
-from train import BASE_PATH
+from main import get_foundation, BASE_PATH
 
 
 RANDOM_TRANSLATE_COUNT = 4
@@ -114,5 +114,14 @@ def get_train_data():
         yield foundation_jit(x), y
 
 
+# save into chunks
+chunks = getenv("CHUNKS", 1)
+chunk, chunk_x, chunk_y = 0, [], []
 for i, (x, y) in enumerate(tqdm(get_train_data(), total=len(train_files))):
-    np.savez(str(BASE_PATH / f"preprocessed/{i}.npz"), x=x.numpy(), y=y.numpy())
+    chunk_x.append(x.numpy())
+    chunk_y.append(y.numpy())
+    if (i + 1) % (len(train_files) // chunks) == 0:
+        print(f"saving chunk {chunk}")
+        np.savez(str(BASE_PATH / f"preprocessed/{chunk}.npz"), x=np.concatenate(chunk_x), y=np.concatenate(chunk_y))
+        chunk_x, chunk_y = [], []
+        chunk += 1

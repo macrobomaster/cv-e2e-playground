@@ -1,6 +1,7 @@
 import glob
 import math
 import random
+import gc
 
 from tinygrad.tensor import Tensor
 from tinygrad.jit import TinyJit
@@ -18,13 +19,15 @@ import wandb
 
 from model import Head
 from main import BASE_PATH
+from optimize import apply_optimizations_training
 
 
+BS = 32
 WARMUP_STEPS = 20
 START_LR = 0.002
-END_LR = 0.00001
-EPOCHS = 200
-STEPS = 200
+END_LR = 0.000001
+EPOCHS = 20
+STEPS = 1000
 
 
 def loss_fn(pred, y):
@@ -46,22 +49,24 @@ def train_step(x, y, lr):
 
 
 preprocessed_train_files = glob.glob(str(BASE_PATH / "preprocessed/*.npz"))
-preprocessed_train_data = [np.load(file) for file in preprocessed_train_files]
-preprocessed_batch_size = preprocessed_train_data[0]["y"].shape[0]
+preprocessed_train_data_loaded = [np.load(file) for file in preprocessed_train_files]
+preprocessed_train_data = [
+    {x: y for x, y in data.items()} for data in preprocessed_train_data_loaded
+]
+for data in preprocessed_train_data_loaded:
+    data.close()
 
 
-def get_minibatch(size=4):
-    x_b, y_b = [], []
-    for _ in range(size):
-        data = random.choice(preprocessed_train_data)
-        sel = random.randint(0, preprocessed_batch_size - 1)  # type: ignore
-        try:
-            x_b.append(data["x"][sel])
-            y_b.append(data["y"][sel])
-        except:
-            print(sel)
-            exit(1)
-    return Tensor(np.stack(x_b)), Tensor(np.stack(y_b))
+def minibatch_iterator():
+    while True:
+        random.shuffle(preprocessed_train_data)
+        for chunk in preprocessed_train_data:
+            order = list(range(0, chunk["y"].shape[0]))
+            random.shuffle(order)
+            for i in range(0, chunk["y"].shape[0] - BS, BS):
+                yield Tensor(
+                    chunk["x"][order[i : i + BS]], requires_grad=False
+                ), Tensor(chunk["y"][order[i : i + BS]], requires_grad=False)
 
 
 if __name__ == "__main__":
@@ -81,10 +86,12 @@ if __name__ == "__main__":
 
     head = Head()
     # load_state_dict(head, safe_load("model.safetensors"))
-    optim = LAMB(get_parameters(head))
+    apply_optimizations_training(head, BS)
+    optim = LAMB(get_parameters(head), wd=0.0001)
 
     warming_up = True
     for epoch in (t := trange(EPOCHS)):
+        batch_iterator = minibatch_iterator()
         for step in range(STEPS):
             if warming_up:
                 new_lr = START_LR * (step / WARMUP_STEPS)
@@ -103,10 +110,9 @@ if __name__ == "__main__":
                 )
 
             if step == 0:
-                x, y = get_minibatch()
-            loss = train_step(x, y, Tensor([new_lr]))
-            if step != 0:
-                x, y = get_minibatch()
+                x, y = next(batch_iterator)
+            loss = train_step(x, y, Tensor([new_lr], requires_grad=False))
+            x, y = next(batch_iterator)
             loss = loss.numpy().item()
             t.set_description(f"loss: {loss:.6f}, lr: {optim.lr.numpy().item():.12f}")
             wandb.log(
@@ -116,4 +122,5 @@ if __name__ == "__main__":
                 }
             )
 
-        safe_save(get_state_dict(head), str(BASE_PATH / f"model.safetensors"))
+        if epoch % 10 == 0 or epoch == EPOCHS - 1:
+            safe_save(get_state_dict(head), str(BASE_PATH / f"model.safetensors"))
