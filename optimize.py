@@ -66,11 +66,14 @@ if __name__ == "__main__":
     print(f"optimizing for {Device.DEFAULT}")
 
     foundation, head = get_foundation(), Head()
-    sched = (
-        sched_for_inference(foundation, head)
-        if not getenv("TRAIN")
-        else sched_for_training(head, getenv("BS", 4))
-    )
+    if getenv("TRAIN"):
+        sched = sched_for_training(head, getenv("BS", 32))
+        Tensor.training = True
+        Tensor.no_grad = False
+    else:
+        sched = sched_for_inference(foundation, head)
+        Tensor.training = False
+        Tensor.no_grad = True
 
     total_tm = 0
     running_gflops = 0
