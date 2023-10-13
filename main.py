@@ -13,6 +13,7 @@ from capture_and_display import ThreadedCapture, ThreadedOutput
 from model import Head
 from utils import download_file
 from smoother import Smoother
+from optimize import apply_optimizations_inference
 
 
 BASE_PATH = Path(os.environ.get("BASE_PATH", "./"))
@@ -55,6 +56,7 @@ if __name__ == "__main__":
     foundation = get_foundation()
     head = Head()
     load_state_dict(head, safe_load(str(BASE_PATH / "model.safetensors")))
+    apply_optimizations_inference(foundation, head)
     smoother_x, smoother_y = Smoother(), Smoother()
 
     @TinyJit
@@ -64,8 +66,8 @@ if __name__ == "__main__":
     cap = cv2.VideoCapture("2744.mp4")
 
     color = "red"
+    st = time.perf_counter()
     while True:
-        st = time.perf_counter()
         # frame = cap_queue.get()
 
         ret, frame = cap.read()
@@ -81,6 +83,8 @@ if __name__ == "__main__":
         # show detection
         detected, x, y, _ = x.numpy()
         dt = time.perf_counter() - st
+        st = time.perf_counter()
+        cv2.putText(frame, f"{1/dt:.2f} FPS", (10, 60), cv2.FONT_HERSHEY_SIMPLEX, 1, (55, 250, 55), 2)
         x, y = smoother_x.update(x, dt), smoother_y.update(y, dt)
         print(detected, x, y)
         if detected > 0.5:
@@ -89,12 +93,36 @@ if __name__ == "__main__":
             x = x * 320 + 320
             y = y * 240 + 240
             cv2.circle(frame, (int(x), int(y)), 10, (0, 50, 255), -1)
-            cv2.putText(frame, f"{int(x)}, {int(y)}", (int(x), int(y)), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (55, 250, 55), 2)
+            cv2.putText(
+                frame,
+                f"{int(x)}, {int(y)}",
+                (int(x), int(y)),
+                cv2.FONT_HERSHEY_SIMPLEX,
+                0.5,
+                (55, 250, 55),
+                2,
+            )
 
         if color == "red":
-            cv2.putText(frame, "detecting red", (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 1, (55, 250, 55), 2)
+            cv2.putText(
+                frame,
+                "detecting red",
+                (10, 30),
+                cv2.FONT_HERSHEY_SIMPLEX,
+                1,
+                (55, 250, 55),
+                2,
+            )
         elif color == "blue":
-            cv2.putText(frame, "detecting blue", (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 1, (55, 250, 55), 2)
+            cv2.putText(
+                frame,
+                "detecting blue",
+                (10, 30),
+                cv2.FONT_HERSHEY_SIMPLEX,
+                1,
+                (55, 250, 55),
+                2,
+            )
         cv2.imshow("preview", cv2.cvtColor(frame, cv2.COLOR_RGB2BGR))
         key = cv2.waitKey(1)
         if key == ord("q"):

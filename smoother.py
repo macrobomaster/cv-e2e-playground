@@ -2,7 +2,7 @@ import math
 
 
 class Smoother:
-    def __init__(self, min_cutoff=0.7, beta=4.7, d_cutoff=1.0):
+    def __init__(self, min_cutoff=0.7, beta=3.7, d_cutoff=1.0):
         self.min_cutoff = min_cutoff
         self.beta = beta
         self.d_cutoff = d_cutoff
