@@ -25,3 +25,6 @@ processed/
 
 # wandb
 wandb
+
+# cached things
+cache/

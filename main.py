@@ -25,7 +25,7 @@ def get_foundation():
     net = Darknet(width, ratio, depth)
     fpn = Yolov8NECK(width, ratio, depth)
 
-    weights_location = Path("/tmp") / f"yolov8{yolo_variant}.safetensors"
+    weights_location = Path("./cache/") / f"yolov8{yolo_variant}.safetensors"
     download_file(
         f"https://gitlab.com/r3sist/yolov8_weights/-/raw/master/yolov8{yolo_variant}.safetensors",
         weights_location,

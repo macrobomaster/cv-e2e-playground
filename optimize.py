@@ -24,7 +24,7 @@ def sched_for_inference(foundation, head):
 
 def apply_optimizations_inference(foundation, head):
     device = cast(Compiled, Device[Device.DEFAULT])
-    db = shelve.open("/tmp/opt_db")
+    db = shelve.open("./cache/opt_db")
 
     for _, si in enumerate(sched_for_inference(foundation, head)):
         lin = Linearizer(si.ast, device.linearizer_opts)
@@ -46,7 +46,7 @@ def sched_for_training(head, bs):
 
 def apply_optimizations_training(head, bs):
     device = cast(Compiled, Device[Device.DEFAULT])
-    db = shelve.open("/tmp/opt_db")
+    db = shelve.open("./cache/opt_db")
 
     for _, si in enumerate(sched_for_training(head, bs)):
         lin = Linearizer(si.ast, device.linearizer_opts)
@@ -59,8 +59,8 @@ def apply_optimizations_training(head, bs):
 if __name__ == "__main__":
     from main import get_foundation
 
-    beam_db = shelve.open("/tmp/beam_cache")
-    db = shelve.open("/tmp/opt_db")
+    beam_db = shelve.open("./cache/beam_cache")
+    db = shelve.open("./cache/opt_db")
 
     device = cast(Compiled, Device[Device.DEFAULT])
     print(f"optimizing for {Device.DEFAULT}")
