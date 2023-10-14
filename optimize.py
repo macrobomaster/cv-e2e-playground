@@ -67,13 +67,13 @@ if __name__ == "__main__":
 
     foundation, head = get_foundation(), Head()
     if getenv("TRAIN"):
-        sched = sched_for_training(head, getenv("BS", 32))
         Tensor.training = True
         Tensor.no_grad = False
+        sched = sched_for_training(head, getenv("BS", 32))
     else:
-        sched = sched_for_inference(foundation, head)
         Tensor.training = False
         Tensor.no_grad = True
+        sched = sched_for_inference(foundation, head)
 
     total_tm = 0
     running_gflops = 0
