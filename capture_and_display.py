@@ -5,16 +5,17 @@ from multiprocessing import Process, Queue
 
 
 class ThreadedCapture(Process):
-    def __init__(self, q: Queue, src:int|str=0, frame_size=(640, 480)):
+    def __init__(self, q: Queue, src=0, frame_size=(640, 480)):
         super(ThreadedCapture, self).__init__()
 
         self.q = q
 
         self.cap = cv2.VideoCapture(src)
         assert self.cap.isOpened(), "Cannot open camera"
-        self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, frame_size[0])
-        self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, frame_size[1])
-        self.cap.set(cv2.CAP_PROP_FPS, 60)
+        if isinstance(src, int):
+            self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, frame_size[0])
+            self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, frame_size[1])
+            self.cap.set(cv2.CAP_PROP_FPS, 60)
 
         self.killed = False
 
