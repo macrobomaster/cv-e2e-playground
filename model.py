@@ -36,7 +36,7 @@ class ConvEmbedding:
 
 class Head:
     def __init__(self):
-        self.conv_emb = ConvEmbedding(512, 512)
+        self.conv_emb = ConvEmbedding(256, 512)
         self.color_emb = Embedding(2, 512)
         self.joint = Linear(512 * 2, 512)
         self.l_out = Linear(512, 4, bias=False)

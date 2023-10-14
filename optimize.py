@@ -35,10 +35,10 @@ def apply_optimizations_inference(foundation, head):
 
 
 def sched_for_training(head, bs):
-    head(Tensor.empty(bs, 512, 15, 20), Tensor.empty(bs, 1))[0].lazydata.schedule(
+    head(Tensor.empty(bs, 256, 15, 20), Tensor.empty(bs, 1))[0].lazydata.schedule(
         seen := set()
     )
-    sched = head(Tensor.empty(bs, 512, 15, 20), Tensor.empty(bs, 1))[
+    sched = head(Tensor.empty(bs, 256, 15, 20), Tensor.empty(bs, 1))[
         0
     ].lazydata.schedule(seen)
     return [x for x in sched if x.ast.op not in LoadOps]

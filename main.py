@@ -20,7 +20,7 @@ BASE_PATH = Path(os.environ.get("BASE_PATH", "./"))
 
 
 def get_foundation():
-    yolo_variant = "s"
+    yolo_variant = "n"
     depth, width, ratio = get_variant_multiples(yolo_variant)
     net = Darknet(width, ratio, depth)
     fpn = Yolov8NECK(width, ratio, depth)
