@@ -23,7 +23,6 @@ def get_foundation():
     yolo_variant = "n"
     depth, width, ratio = get_variant_multiples(yolo_variant)
     net = Darknet(width, ratio, depth)
-    fpn = Yolov8NECK(width, ratio, depth)
 
     weights_location = Path("./cache/") / f"yolov8{yolo_variant}.safetensors"
     download_file(
@@ -32,11 +31,11 @@ def get_foundation():
     )
 
     state_dict = safe_load(str(weights_location))
-    load_state_dict({"net": net, "fpn": fpn}, state_dict)
+    load_state_dict({"net": net}, state_dict)
 
     def foundation(img):
         x = net(img.permute(0, 3, 1, 2).float() / 255)
-        return fpn(*x)[-1]
+        return x[-1]
 
     return foundation
 
