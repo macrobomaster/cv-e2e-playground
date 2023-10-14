@@ -65,14 +65,15 @@ if __name__ == "__main__":
     device = cast(Compiled, Device[Device.DEFAULT])
     print(f"optimizing for {Device.DEFAULT}")
 
-    foundation, head = get_foundation(), Head()
     if getenv("TRAIN"):
         Tensor.training = True
         Tensor.no_grad = False
+        head = Head()
         sched = sched_for_training(head, getenv("BS", 32))
     else:
         Tensor.training = False
         Tensor.no_grad = True
+        foundation, head = get_foundation(), Head()
         sched = sched_for_inference(foundation, head)
 
     total_tm = 0
