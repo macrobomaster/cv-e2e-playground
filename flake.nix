@@ -67,6 +67,7 @@
                    enableGtk3 = true;
                 })
                 wandb
+                onnx
               ];
             python = pkgs.python311;
           in
