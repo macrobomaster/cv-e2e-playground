@@ -101,7 +101,7 @@ class C2f:
         ]
 
     def __call__(self, x):
-        y = list(self.cv1(x).chunk(2, 1))
+        y = self.cv1(x).chunk(2, 1)
         y.extend(m(y[-1]) for m in self.bottleneck)
         z = y[0]
         for i in y[1:]:

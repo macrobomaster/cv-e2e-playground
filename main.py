@@ -132,4 +132,4 @@ if __name__ == "__main__":
         elif key == ord("b"):
             color = "blue"
 
-        time.sleep(0.05)
+        # time.sleep(0.05)
