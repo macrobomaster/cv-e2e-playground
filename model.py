@@ -9,9 +9,9 @@ class ConvBlock:
         self.c2 = Conv2d(c_out // 2, c_out, kernel_size=3, padding=1, bias=False)
 
     def __call__(self, x: Tensor):
-        x = self.c1(x).max_pool2d().gelu()
+        x = self.c1(x).max_pool2d().mish()
         residual = self.c_res(x)
-        x = self.c2(x).gelu()
+        x = self.c2(x).mish()
         return x + residual
 
 
