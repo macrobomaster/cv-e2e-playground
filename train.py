@@ -19,7 +19,6 @@ import wandb
 
 from model import Head
 from main import BASE_PATH
-from optimize import apply_optimizations_training
 
 
 BS = 32
@@ -70,6 +69,8 @@ def minibatch_iterator():
 
 
 if __name__ == "__main__":
+    from optimize import apply_optimizations_training
+
     Tensor.no_grad = False
     Tensor.training = True
 

@@ -1,5 +1,6 @@
 import shelve
 from typing import cast
+from tinygrad.nn.state import get_parameters
 
 from tinygrad.tensor import Tensor
 from tinygrad.ops import LoadOps, Device, Compiled
@@ -35,12 +36,40 @@ def apply_optimizations_inference(foundation, head):
 
 
 def sched_for_training(head, bs):
-    head(Tensor.empty(bs, 256, 15, 20), Tensor.empty(bs, 1))[0].lazydata.schedule(
-        seen := set()
-    )
-    sched = head(Tensor.empty(bs, 256, 15, 20), Tensor.empty(bs, 1))[
-        0
-    ].lazydata.schedule(seen)
+    from train import loss_fn
+
+    # forward pass
+    loss_fn(
+        head(
+            Tensor.empty(bs, 256, 15, 20, requires_grad=False),
+            Tensor.empty(bs, 1, requires_grad=False),
+        ),
+        Tensor.empty(bs, 4, requires_grad=False),
+    ).lazydata.schedule(seen := set())
+    sched = loss_fn(
+        head(
+            Tensor.empty(bs, 256, 15, 20, requires_grad=False),
+            Tensor.empty(bs, 1, requires_grad=False),
+        ),
+        Tensor.empty(bs, 4, requires_grad=False),
+    ).lazydata.schedule(seen)
+
+    # backward pass
+    for param in get_parameters(head):
+        if param.requires_grad is None:
+            param.requires_grad = True
+
+    loss_fn(
+        head(
+            Tensor.empty(bs, 256, 15, 20, requires_grad=False),
+            Tensor.empty(bs, 1, requires_grad=False),
+        ),
+        Tensor.empty(bs, 4, requires_grad=False),
+    ).backward()
+    for param in get_parameters(head):
+        if param.grad is not None:
+            sched += param.grad.lazydata.schedule(seen)
+
     return [x for x in sched if x.ast.op not in LoadOps]
 
 
@@ -75,6 +104,8 @@ if __name__ == "__main__":
         Tensor.no_grad = True
         foundation, head = get_foundation(), Head()
         sched = sched_for_inference(foundation, head)
+
+    print(f"found {len(sched)} kernels")
 
     total_tm = 0
     running_gflops = 0
