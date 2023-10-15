@@ -4,6 +4,7 @@ import random
 import gc
 
 from tinygrad.tensor import Tensor
+from tinygrad.helpers import dtypes
 from tinygrad.jit import TinyJit
 from tinygrad.nn.optim import LAMB
 from tinygrad.nn.state import (
@@ -49,23 +50,26 @@ def train_step(x, y, lr):
 
 preprocessed_train_files = glob.glob(str(BASE_PATH / "preprocessed/*.npz"))
 preprocessed_train_data_loaded = [np.load(file) for file in preprocessed_train_files]
-preprocessed_train_data = [
-    {x: y for x, y in data.items()} for data in preprocessed_train_data_loaded
-]
-for data in preprocessed_train_data_loaded:
-    data.close()
 
 
 def minibatch_iterator():
     while True:
-        random.shuffle(preprocessed_train_data)
-        for chunk in preprocessed_train_data:
+        random.shuffle(preprocessed_train_data_loaded)
+        for chunk in preprocessed_train_data_loaded:
+            # load chunk into memory
+            chunk = {x: y for x, y in chunk.items()}
             order = list(range(0, chunk["y"].shape[0]))
             random.shuffle(order)
             for i in range(0, chunk["y"].shape[0] - BS, BS):
                 yield Tensor(
-                    chunk["x"][order[i : i + BS]], requires_grad=False
-                ), Tensor(chunk["y"][order[i : i + BS]], requires_grad=False)
+                    chunk["x"][order[i : i + BS]],
+                    requires_grad=False,
+                    dtype=dtypes.float32,
+                ), Tensor(
+                    chunk["y"][order[i : i + BS]],
+                    requires_grad=False,
+                    dtype=dtypes.float32,
+                )
 
 
 if __name__ == "__main__":
