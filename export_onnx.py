@@ -22,16 +22,16 @@ def make_Conv2d(n: Conv2d, name: str, x: str):
 
 def make_ConvBlock(n: ConvBlock, name: str, x: str):
     c1, c1_nodes, c1_weights = make_Conv2d(n.c1, name + ".c1", x)
-    mp = make_node("MaxPool", [c1.output[0]], [name + ".mp"], name=name + ".mp", kernel_shape=[2, 2])
-    gelu1 = make_node("Mish", [mp.output[0]], [name + ".mish1"], name=name + ".mish1")
+    mp = make_node("MaxPool", [c1.output[0]], [name + ".mp"], name=name + ".mp", kernel_shape=[2, 2], strides=[2, 2])
+    mish1 = make_node("Mish", [mp.output[0]], [name + ".mish1"], name=name + ".mish1")
 
-    c_res, c_res_nodes, c_res_weights = make_Conv2d(n.c_res, name + ".c_res", gelu1.output[0])
+    c_res, c_res_nodes, c_res_weights = make_Conv2d(n.c_res, name + ".c_res", mish1.output[0])
 
-    c2, c2_nodes, c2_weights = make_Conv2d(n.c2, name + ".c2", gelu1.output[0])
-    gelu2 = make_node("Mish", [c2.output[0]], [name + ".mish2"], name=name + ".mish2")
+    c2, c2_nodes, c2_weights = make_Conv2d(n.c2, name + ".c2", mish1.output[0])
+    mish2 = make_node("Mish", [c2.output[0]], [name + ".mish2"], name=name + ".mish2")
 
-    reduce = make_node("Add", [c_res.output[0], gelu2.output[0]], [name + ".reduce"], name=name + ".reduce")
-    return reduce, [*c1_nodes, mp, gelu1, *c_res_nodes, *c2_nodes, gelu2, reduce], [*c1_weights, *c_res_weights, *c2_weights]
+    reduce = make_node("Add", [c_res.output[0], mish2.output[0]], [name + ".reduce"], name=name + ".reduce")
+    return reduce, [*c1_nodes, mp, mish1, *c_res_nodes, *c2_nodes, mish2, reduce], [*c1_weights, *c_res_weights, *c2_weights]
 
 
 def make_ConvEmbedding(n: ConvEmbedding, name: str, x: str):
@@ -39,7 +39,7 @@ def make_ConvEmbedding(n: ConvEmbedding, name: str, x: str):
 
     post_conv, post_conv_nodes, post_conv_weights = make_Conv2d(n.post_conv, name + ".post_conv", pre_conv.output[0])
 
-    axes = numpy_helper.from_array(np.array([2, 3]), name + ".axes")
+    axes = numpy_helper.from_array(np.array([2, 3], dtype=np.int64), name + ".axes")
     if n.reduction == "max":
         reduce = make_node("ReduceMax", [post_conv.output[0], axes.name], [name + ".reduce"], name=name + ".reduce", keepdims=0)
     elif n.reduction == "mean":
@@ -57,11 +57,11 @@ def make_Embedding(n: Embedding, name: str, x: str):
 
 
 def make_Linear(n: Linear, name: str, x: str):
-    weight = numpy_helper.from_array(n.weight.numpy(), name + ".weight")
+    weight = numpy_helper.from_array(n.weight.numpy().T, name + ".weight")
     if n.bias is not None:
         bias = numpy_helper.from_array(n.bias.numpy(), name + ".bias")
         matmul = make_node("MatMul", [x, weight.name], [name + ".matmul"], name=name + ".matmul")
-        add = make_node("Add", [matmul.output[0], bias.name], [name], name=name)
+        add = make_node("Add", [matmul.output[0], bias.name], [name + ".reduce"], name=name + ".reduce")
         return add, [matmul, add], [weight, bias]
     else:
         matmul = make_node("MatMul", [x, weight.name], [name], name=name)
@@ -71,11 +71,14 @@ def make_Linear(n: Linear, name: str, x: str):
 def make_Head(head: Head, name: str, x: str, color: str):
     conv_emb, conv_emb_nodes, conv_emb_weights = make_ConvEmbedding(head.conv_emb, name + ".conv_emb", x)
     color_emb, color_emb_nodes, color_emb_weights = make_Embedding(head.color_emb, name + ".color_emb", color)
-    cat = make_node("Concat", [conv_emb.output[0], color_emb.output[0]], [name + ".cat"], name=name + ".cat", axis=1)
+    color_emb_squeeze_axes = numpy_helper.from_array(np.array([1], dtype=np.int64), name + ".color_emb_squeeze_axes")
+    color_emb_squeeze = make_node("Squeeze", [color_emb.output[0], color_emb_squeeze_axes.name], [name + ".color_emb_squeeze"], name=name + ".color_emb_squeeze")
+    cat = make_node("Concat", [conv_emb.output[0], color_emb_squeeze.output[0]], [name + ".cat"], name=name + ".cat", axis=1)
     joint, joint_nodes, joint_weights = make_Linear(head.joint, name + ".joint", cat.output[0])
-    l_out_node, l_out_nodes, l_out_weights = make_Linear(head.l_out, name + ".l_out", joint.output[0])
+    leakyrelu = make_node("LeakyRelu", [joint.output[0]], [name + ".leakyrelu"], name=name + ".leakyrelu", alpha=0.01)
+    l_out_node, l_out_nodes, l_out_weights = make_Linear(head.l_out, name + ".l_out", leakyrelu.output[0])
 
-    return l_out_node, [*conv_emb_nodes, *color_emb_nodes, cat, *joint_nodes, *l_out_nodes], [*conv_emb_weights, *color_emb_weights, *joint_weights, *l_out_weights]
+    return l_out_node, [*conv_emb_nodes, *color_emb_nodes, color_emb_squeeze, cat, *joint_nodes, leakyrelu, *l_out_nodes], [*conv_emb_weights, *color_emb_weights, color_emb_squeeze_axes, *joint_weights, *l_out_weights]
 
 
 if __name__ == "__main__":
@@ -83,7 +86,7 @@ if __name__ == "__main__":
     load_state_dict(head, safe_load(str(BASE_PATH / "model.safetensors")))
 
     x = make_tensor_value_info("x", TensorProto.FLOAT, [1, 256, 15, 20])
-    color = make_tensor_value_info("color", TensorProto.FLOAT, [1, 1])
+    color = make_tensor_value_info("color", TensorProto.INT32, [1, 1])
     out = make_tensor_value_info("out", TensorProto.FLOAT, [1, 4])
 
     l_out_node, nodes, weights = make_Head(head, "head", "x", "color")
