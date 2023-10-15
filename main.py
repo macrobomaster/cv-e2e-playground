@@ -9,7 +9,6 @@ from tinygrad.tensor import Tensor
 from tinygrad.jit import TinyJit
 from tinygrad.nn.state import safe_load, load_state_dict, get_parameters
 from yolov8 import get_variant_multiples, Darknet
-import onnxruntime as ort
 import numpy as np
 
 from capture_and_display import ThreadedCapture, ThreadedOutput
@@ -58,17 +57,15 @@ if __name__ == "__main__":
     # out = ThreadedOutput(out_queue)
     # out.start()
 
-    # foundation = get_foundation()
-    # head = Head()
-    # load_state_dict(head, safe_load(str(BASE_PATH / "model.safetensors")))
-    # apply_optimizations_inference(foundation, head)
+    foundation = get_foundation()
+    head = Head()
+    load_state_dict(head, safe_load(str(BASE_PATH / "model.safetensors")))
+    apply_optimizations_inference(foundation, head)
     smoother_x, smoother_y = Smoother(), Smoother()
 
-    # @TinyJit
-    # def pred(img, color):
-    #     return head(foundation(img), color)[0].realize()
-
-    session = ort.InferenceSession("./model.onnx")
+    @TinyJit
+    def pred(img, color):
+        return head(foundation(img), color)[0].realize()
 
     cap = cv2.VideoCapture("2744.mp4")
 
@@ -84,20 +81,11 @@ if __name__ == "__main__":
         frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
         frame = frame[:, 106:746]
 
-        # img = Tensor(frame).reshape(1, 480, 640, 3)
-        # x = pred(img, Tensor([[0]]) if color == "red" else Tensor([[1]])).numpy()
-        x = session.run(
-            None,
-            {
-                "x": np.expand_dims(frame, 0).astype(np.float32),
-                "color": np.array([[0]], dtype=np.int32)
-                if color == "red"
-                else np.array([[1]], dtype=np.int32),
-            },
-        )[0][0]
+        img = Tensor(frame).reshape(1, 480, 640, 3)
+        x = pred(img, Tensor([[0]]) if color == "red" else Tensor([[1]]))
 
         # show detection
-        detected, x, y, _ = x
+        detected, x, y, _ = x.numpy()
         dt = time.perf_counter() - st
         st = time.perf_counter()
         cv2.putText(
@@ -156,4 +144,4 @@ if __name__ == "__main__":
         elif key == ord("b"):
             color = "blue"
 
-        # time.sleep(0.025)
+        time.sleep(0.025)
