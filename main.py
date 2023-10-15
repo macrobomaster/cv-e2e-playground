@@ -9,7 +9,6 @@ from tinygrad.tensor import Tensor
 from tinygrad.jit import TinyJit
 from tinygrad.nn.state import safe_load, load_state_dict, get_parameters
 from yolov8 import get_variant_multiples, Darknet
-import numpy as np
 
 from capture_and_display import ThreadedCapture, ThreadedOutput
 from model import Head
