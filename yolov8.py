@@ -77,9 +77,7 @@ class C2f:
     def __call__(self, x):
         y = self.cv1(x).chunk(2, 1)
         y.extend(m(y[-1]) for m in self.bottleneck)
-        z = y[0]
-        for i in y[1:]:
-            z = z.cat(i, dim=1)
+        z = y[0].cat(*y[1:], dim=1)
         return self.cv2(z)
 
 
@@ -89,6 +87,7 @@ class SPPF:
         self.cv1 = Conv_Block(c1, c_, 1, 1, padding=None)
         self.cv2 = Conv_Block(c_ * 4, c2, 1, 1, padding=None)
 
+        self.k = k
         self.maxpool = lambda x: x.pad2d(
             (k // 2, k // 2, k // 2, k // 2), value=-inf
         ).max_pool2d(kernel_size=k, stride=1)
