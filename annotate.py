@@ -51,7 +51,7 @@ if (stage := int(os.environ.get("STAGE", 0))) == 0:
                 break
         i += 1
 elif stage == 1:
-    frame_files = glob.glob(str(BASE_PATH / "annotated/*.png"))
+    frame_files = glob.glob(str(BASE_PATH / "data/*.png"))
     print(f"there are {len(frame_files)} frames")
 
     i = 0
@@ -93,7 +93,7 @@ elif stage == 1:
                 break
         i += 1
 elif stage == 2:
-    frame_files = glob.glob(str(BASE_PATH / "annotated/*.png"))
+    frame_files = glob.glob(str(BASE_PATH / "data/*.png"))
     print(f"there are {len(frame_files)} frames")
 
     i = 0
@@ -115,6 +115,13 @@ elif stage == 2:
                     detected, x, y, color = int(line[0]), int(line[1]), int(line[2]), int(line[3])
                 with open(Path(frame_file).with_suffix(".txt"), "w") as f:
                     f.write(f"{detected} {x} {y} {color} -1")
+                break
+            elif key == ord("1"):
+                with open(Path(frame_file).with_suffix(".txt"), "r") as f:
+                    line = f.readline().split(" ")
+                    detected, x, y, color = int(line[0]), int(line[1]), int(line[2]), int(line[3])
+                with open(Path(frame_file).with_suffix(".txt"), "w") as f:
+                    f.write(f"{detected} {x} {y} {color} 1")
                 break
             elif key == ord("3"):
                 with open(Path(frame_file).with_suffix(".txt"), "r") as f:
