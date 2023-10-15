@@ -68,6 +68,7 @@
                 })
                 wandb
                 onnx
+                onnxruntime
               ];
             python = pkgs.python311;
           in

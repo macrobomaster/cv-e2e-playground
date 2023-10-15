@@ -4,10 +4,13 @@ import time
 import os
 
 import cv2
+from tinygrad.helpers import dtypes
 from tinygrad.tensor import Tensor
 from tinygrad.jit import TinyJit
-from tinygrad.nn.state import safe_load, load_state_dict
-from yolov8 import get_variant_multiples, Darknet, Yolov8NECK
+from tinygrad.nn.state import safe_load, load_state_dict, get_parameters
+from yolov8 import get_variant_multiples, Darknet
+import onnxruntime as ort
+import numpy as np
 
 from capture_and_display import ThreadedCapture, ThreadedOutput
 from model import Head
@@ -32,10 +35,13 @@ def get_foundation():
 
     state_dict = safe_load(str(weights_location))
     load_state_dict({"net": net}, state_dict)
+    for param in get_parameters(net):
+        param.assign(param.cast(dtypes.float32)).realize()
 
     def foundation(img):
         x = net(img.permute(0, 3, 1, 2).float() / 255)
         return x[-1]
+    setattr(foundation, "net", net)
 
     return foundation
 
@@ -52,15 +58,17 @@ if __name__ == "__main__":
     # out = ThreadedOutput(out_queue)
     # out.start()
 
-    foundation = get_foundation()
-    head = Head()
-    load_state_dict(head, safe_load(str(BASE_PATH / "model.safetensors")))
-    apply_optimizations_inference(foundation, head)
+    # foundation = get_foundation()
+    # head = Head()
+    # load_state_dict(head, safe_load(str(BASE_PATH / "model.safetensors")))
+    # apply_optimizations_inference(foundation, head)
     smoother_x, smoother_y = Smoother(), Smoother()
 
-    @TinyJit
-    def pred(img, color):
-        return head(foundation(img), color)[0].realize()
+    # @TinyJit
+    # def pred(img, color):
+    #     return head(foundation(img), color)[0].realize()
+
+    session = ort.InferenceSession("./model.onnx")
 
     cap = cv2.VideoCapture("2744.mp4")
 
@@ -76,14 +84,31 @@ if __name__ == "__main__":
         frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
         frame = frame[:, 106:746]
 
-        img = Tensor(frame).reshape(1, 480, 640, 3)
-        x = pred(img, Tensor([[0]]) if color == "red" else Tensor([[1]]))
+        # img = Tensor(frame).reshape(1, 480, 640, 3)
+        # x = pred(img, Tensor([[0]]) if color == "red" else Tensor([[1]])).numpy()
+        x = session.run(
+            None,
+            {
+                "x": np.expand_dims(frame, 0).astype(np.float32),
+                "color": np.array([[0]], dtype=np.int32)
+                if color == "red"
+                else np.array([[1]], dtype=np.int32),
+            },
+        )[0][0]
 
         # show detection
-        detected, x, y, _ = x.numpy()
+        detected, x, y, _ = x
         dt = time.perf_counter() - st
         st = time.perf_counter()
-        cv2.putText(frame, f"{1/dt:.2f} FPS", (10, 60), cv2.FONT_HERSHEY_SIMPLEX, 1, (55, 250, 55), 2)
+        cv2.putText(
+            frame,
+            f"{1/dt:.2f} FPS",
+            (10, 60),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            1,
+            (55, 250, 55),
+            2,
+        )
         x, y = smoother_x.update(x, dt), smoother_y.update(y, dt)
         print(detected, x, y)
         if detected > 0.5:
@@ -131,4 +156,4 @@ if __name__ == "__main__":
         elif key == ord("b"):
             color = "blue"
 
-        # time.sleep(0.05)
+        # time.sleep(0.025)
