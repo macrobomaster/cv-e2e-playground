@@ -13,7 +13,8 @@ from tinygrad.helpers import getenv
 from main import get_foundation, BASE_PATH
 
 
-RANDOM_TRANSLATE_COUNT = 4
+RANDOM_TRANSLATE_COUNT = 7
+FLIP_COLOR_COUNT = 3
 
 
 foundation = get_foundation()
@@ -75,7 +76,7 @@ def get_train_data():
         img = cv2.imread(frame_file)
         # convert to rgb
         img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
-        img_left = img[:, 212:852]
+        img_left = img[:, 212:852] if img.shape[1] > 640 else img
         img_right = img[:, 0:640]
 
         # load y
@@ -83,8 +84,13 @@ def get_train_data():
             line = f.readline().split(" ")
             detected, x, y, color = int(line[0]), int(line[1]), int(line[2]), int(line[3])
 
+        # if the color is not known, make it random
+        if color == -1:
+            detected = 0
+            color = random.randint(0, 1)
+
         # offset for crop
-        x_left, x_right = x - 212, x
+        x_left, x_right = x - 212 if img.shape[1] > 640 else x, x
         y_left, y_right = y, y
 
         # add initial imgs
@@ -103,9 +109,9 @@ def get_train_data():
             )
 
         # flip color
-        for _ in range(3):
-            add_to_batch(x_b, y_b, 0, 1 - color, img_left, 0, 0)
-            add_to_batch(x_b, y_b, 0, 1 - color, img_right, 0, 0)
+        for _ in range(FLIP_COLOR_COUNT):
+            add_to_batch(x_b, y_b, 0, 1 - color, *random_translate(img_left, x_left, y_left))
+            add_to_batch(x_b, y_b, 0, 1 - color, *random_translate(img_right, x_right, y_right))
 
         # batch
         x = Tensor.stack(x_b, dim=0)
@@ -115,13 +121,13 @@ def get_train_data():
 
 
 # save into chunks
-chunks = getenv("CHUNKS", 1)
+chunks = getenv("CHUNKS", 2)
 chunk, chunk_x, chunk_y = 0, [], []
 for i, (x, y) in enumerate(tqdm(get_train_data(), total=len(train_files))):
     chunk_x.append(x.numpy())
     chunk_y.append(y.numpy())
     if (i + 1) % (len(train_files) // chunks) == 0:
         print(f"saving chunk {chunk}")
-        np.savez(str(BASE_PATH / f"preprocessed/{chunk}.npz"), x=np.concatenate(chunk_x), y=np.concatenate(chunk_y))
+        np.savez(str(BASE_PATH / f"preprocessed/{chunk}.npz"), x=np.concatenate(chunk_x).astype(np.float16), y=np.concatenate(chunk_y).astype(np.float16))
         chunk_x, chunk_y = [], []
         chunk += 1
