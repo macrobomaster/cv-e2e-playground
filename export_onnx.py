@@ -1,7 +1,3 @@
-import inspect
-from tinygrad.graph import print_tree
-
-from tinygrad.tensor import Tensor
 from tinygrad.nn.state import load_state_dict, safe_load
 from tinygrad.nn import Conv2d, Embedding, Linear
 from onnx import numpy_helper, TensorProto
