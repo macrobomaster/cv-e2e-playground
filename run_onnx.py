@@ -8,7 +8,7 @@ from smoother import Smoother
 
 
 if __name__ == "__main__":
-    session = ort.InferenceSession("model.onnx")
+    session = ort.InferenceSession("model_fp16.onnx")
     smoother_x, smoother_y = Smoother(), Smoother()
 
     cap = cv2.VideoCapture("2744.mp4")
@@ -93,5 +93,3 @@ if __name__ == "__main__":
             color = "red"
         elif key == ord("b"):
             color = "blue"
-
-        time.sleep(0.05)
