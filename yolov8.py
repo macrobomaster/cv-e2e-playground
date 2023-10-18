@@ -1,14 +1,13 @@
 from tinygrad.nn import Conv2d, BatchNorm2d
+
 from math import inf
 
 
-def autopad(k, p=None, d=1):  # kernel, padding, dilation
+def autopad(k, p=None, d=1):
     if d > 1:
-        k = (
-            d * (k - 1) + 1 if isinstance(k, int) else [d * (x - 1) + 1 for x in k]
-        )  # actual kernel-size
+        k = d * (k - 1) + 1 if isinstance(k, int) else [d * (x - 1) + 1 for x in k]
     if p is None:
-        p = k // 2 if isinstance(k, int) else [x // 2 for x in k]  # auto-pad
+        p = k // 2 if isinstance(k, int) else [x // 2 for x in k]
     return p
 
 
@@ -83,7 +82,7 @@ class C2f:
 
 class SPPF:
     def __init__(self, c1, c2, k=5):
-        c_ = c1 // 2  # hidden channels
+        c_ = c1 // 2
         self.cv1 = Conv_Block(c1, c_, 1, 1, padding=None)
         self.cv2 = Conv_Block(c_ * 4, c2, 1, 1, padding=None)
 
