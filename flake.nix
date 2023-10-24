@@ -24,24 +24,6 @@
         devShell = pkgs.mkShell {
           packages = let
             python-packages = p: let
-              nevergrad = p.buildPythonPackage rec {
-                pname = "nevergrad";
-                version = "0.14.0";
-                src = pkgs.fetchFromGitHub {
-                  owner = "facebookresearch";
-                  repo = pname;
-                  rev = version;
-                  sha256 = "sha256-qHcrpyc9/pPyQUrZTq1A3KpAn16VlpDi+wTdOVb726I=";
-                };
-                doCheck = false;
-                propagatedBuildInputs = with p; [
-                  bayesian-optimization
-                  cma
-                  numpy
-                  pandas
-                  typing-extensions
-                ];
-              };
               tinygrad = p.buildPythonPackage {
                 pname = "tinygrad";
                 version = inputs.tinygrad.shortRev;
@@ -49,7 +31,6 @@
                 doCheck = false;
                 propagatedBuildInputs = with p; [
                   networkx
-                  nevergrad
                   numpy
                   pillow
                   pyopencl
@@ -69,6 +50,10 @@
                 wandb
                 onnx
                 onnxruntime
+                (onnxconverter-common.override {
+                  protobuf = protobuf;
+                })
+                llvmlite
               ];
             python = pkgs.python311;
           in
