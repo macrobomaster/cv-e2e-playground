@@ -11,7 +11,7 @@ from tinygrad.nn.state import safe_load, load_state_dict, get_parameters
 from yolov8 import get_variant_multiples, Darknet
 
 from capture_and_display import ThreadedCapture, ThreadedOutput
-from model import Head
+from model import Model
 from utils import download_file
 from smoother import Smoother
 from optimize import apply_optimizations_inference
@@ -38,7 +38,13 @@ def get_foundation():
 
     def foundation(img):
         x = net(img.permute(0, 3, 1, 2).float() / 255)
+        # x5 = upsample(x5, 2)
+        # x3 = x3.pad2d((1, 1, 1, 1)).avg_pool2d(3, 2)
+        # x2 = (
+        #     x2.pad2d((1, 1, 1, 1)).avg_pool2d(3, 2).pad2d((1, 1, 1, 1)).avg_pool2d(3, 2)
+        # )
         return x[-1]
+
     setattr(foundation, "net", net)
 
     return foundation
@@ -57,16 +63,16 @@ if __name__ == "__main__":
     # out.start()
 
     foundation = get_foundation()
-    head = Head()
-    load_state_dict(head, safe_load(str(BASE_PATH / "model.safetensors")))
-    apply_optimizations_inference(foundation, head)
+    model = Model()
+    load_state_dict(model, safe_load(str(BASE_PATH / "model.safetensors")))
+    apply_optimizations_inference(foundation, model)
     smoother_x, smoother_y = Smoother(), Smoother()
 
     @TinyJit
     def pred(img, color):
-        return head(foundation(img), color)[0].realize()
+        return model(foundation(img), color)[0].realize()
 
-    cap = cv2.VideoCapture("2744.mp4")
+    cap = cv2.VideoCapture("out2.mp4")
 
     color = "red"
     st = time.perf_counter()
@@ -79,6 +85,7 @@ if __name__ == "__main__":
         # convert to rgb
         frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
         frame = frame[:, 106:746]
+        # frame = frame[:, 212:]
 
         img = Tensor(frame).reshape(1, 480, 640, 3)
         x = pred(img, Tensor([[0]]) if color == "red" else Tensor([[1]]))
@@ -143,4 +150,4 @@ if __name__ == "__main__":
         elif key == ord("b"):
             color = "blue"
 
-        time.sleep(0.025)
+        time.sleep(0.05)

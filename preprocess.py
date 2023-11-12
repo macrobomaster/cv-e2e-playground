@@ -60,7 +60,7 @@ def add_to_batch(x_b, y_b, detected, color, img, x, y):
     y = (y - 240) / 240
 
     if not detected:
-        x, y = 0, 0
+        x, y, color = 0, 0, random.randint(0, 1)
 
     x_b.append(Tensor(img).reshape(480, 640, 3))
     y_b.append(Tensor([detected, x, y, color]))
@@ -82,12 +82,16 @@ def get_train_data():
         # load y
         with open(Path(frame_file).with_suffix(".txt"), "r") as f:
             line = f.readline().split(" ")
-            detected, x, y, color = int(line[0]), int(line[1]), int(line[2]), int(line[3])
+            detected, x, y, color = (
+                int(line[0]),
+                int(line[1]),
+                int(line[2]),
+                int(line[3]),
+            )
 
-        # if the color is not known, make it random
+        # if the color is not known, it is not detected
         if color == -1:
             detected = 0
-            color = random.randint(0, 1)
 
         # offset for crop
         x_left, x_right = x - 212 if img.shape[1] > 640 else x, x
@@ -105,13 +109,21 @@ def get_train_data():
                 x_b, y_b, detected, color, *random_translate(img_left, x_left, y_left)
             )
             add_to_batch(
-                x_b, y_b, detected, color, *random_translate(img_right, x_right, y_right)
+                x_b,
+                y_b,
+                detected,
+                color,
+                *random_translate(img_right, x_right, y_right),
             )
 
         # flip color
         for _ in range(FLIP_COLOR_COUNT):
-            add_to_batch(x_b, y_b, 0, 1 - color, *random_translate(img_left, x_left, y_left))
-            add_to_batch(x_b, y_b, 0, 1 - color, *random_translate(img_right, x_right, y_right))
+            add_to_batch(
+                x_b, y_b, 0, 1 - color, *random_translate(img_left, x_left, y_left)
+            )
+            add_to_batch(
+                x_b, y_b, 0, 1 - color, *random_translate(img_right, x_right, y_right)
+            )
 
         # batch
         x = Tensor.stack(x_b, dim=0)
@@ -121,13 +133,17 @@ def get_train_data():
 
 
 # save into chunks
-chunks = getenv("CHUNKS", 2)
+chunks = getenv("CHUNKS", 4)
 chunk, chunk_x, chunk_y = 0, [], []
 for i, (x, y) in enumerate(tqdm(get_train_data(), total=len(train_files))):
     chunk_x.append(x.numpy())
     chunk_y.append(y.numpy())
     if (i + 1) % (len(train_files) // chunks) == 0:
         print(f"saving chunk {chunk}")
-        np.savez(str(BASE_PATH / f"preprocessed/{chunk}.npz"), x=np.concatenate(chunk_x).astype(np.float16), y=np.concatenate(chunk_y).astype(np.float16))
+        np.savez(
+            str(BASE_PATH / f"preprocessed/{chunk}.npz"),
+            x=np.concatenate(chunk_x).astype(np.float16),
+            y=np.concatenate(chunk_y).astype(np.float16),
+        )
         chunk_x, chunk_y = [], []
         chunk += 1

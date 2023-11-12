@@ -5,29 +5,30 @@ from tinygrad.nn.state import get_parameters
 from tinygrad.tensor import Tensor
 from tinygrad.ops import LoadOps, Device, Compiled
 from tinygrad.codegen.linearizer import Linearizer
-from tinygrad.codegen.search import time_linearizer, get_linearizer_actions
-from tinygrad.helpers import ansilen, getenv, flatten
+from tinygrad.features.search import (
+    time_linearizer,
+    beam_search,
+)
+from tinygrad.helpers import ansilen, getenv
 from tinygrad.lazy import vars_from_ast
 from tinygrad.shape.symbolic import sym_infer
 
-from model import Head
+from model import Model
 
 
-def sched_for_inference(foundation, head):
-    head(foundation(Tensor.empty(1, 480, 640, 3)), Tensor.empty(1, 1))[
-        0
-    ].lazydata.schedule(seen := set())
-    sched = head(foundation(Tensor.empty(1, 480, 640, 3)), Tensor.empty(1, 1))[
-        0
-    ].lazydata.schedule(seen)
+def sched_for_inference(foundation, model):
+    x = foundation(Tensor.empty(1, 480, 640, 3))
+    model(x, Tensor.empty(1, 1))[0].lazydata.schedule(seen := set())
+    x = foundation(Tensor.empty(1, 480, 640, 3))
+    sched = model(x, Tensor.empty(1, 1))[0].lazydata.schedule(seen)
     return [x for x in sched if x.ast.op not in LoadOps]
 
 
-def apply_optimizations_inference(foundation, head):
+def apply_optimizations_inference(foundation, model):
     device = cast(Compiled, Device[Device.DEFAULT])
     db = shelve.open("./cache/opt_db")
 
-    for _, si in enumerate(sched_for_inference(foundation, head)):
+    for _, si in enumerate(sched_for_inference(foundation, model)):
         lin = Linearizer(si.ast, device.linearizer_opts)
         if (key := str(lin.ast)) in db:
             for ao in db[key]:
@@ -35,19 +36,19 @@ def apply_optimizations_inference(foundation, head):
             device.method_cache[lin.ast] = device.to_program(lin)
 
 
-def sched_for_training(head, bs):
+def sched_for_training(model, bs):
     from train import loss_fn
 
     # forward pass
     loss_fn(
-        head(
+        model(
             Tensor.empty(bs, 256, 15, 20, requires_grad=False),
             Tensor.empty(bs, 1, requires_grad=False),
         ),
         Tensor.empty(bs, 4, requires_grad=False),
     ).lazydata.schedule(seen := set())
     sched = loss_fn(
-        head(
+        model(
             Tensor.empty(bs, 256, 15, 20, requires_grad=False),
             Tensor.empty(bs, 1, requires_grad=False),
         ),
@@ -55,29 +56,29 @@ def sched_for_training(head, bs):
     ).lazydata.schedule(seen)
 
     # backward pass
-    for param in get_parameters(head):
+    for param in get_parameters(model):
         if param.requires_grad is None:
             param.requires_grad = True
 
     loss_fn(
-        head(
+        model(
             Tensor.empty(bs, 256, 15, 20, requires_grad=False),
             Tensor.empty(bs, 1, requires_grad=False),
         ),
         Tensor.empty(bs, 4, requires_grad=False),
     ).backward()
-    for param in get_parameters(head):
+    for param in get_parameters(model):
         if param.grad is not None:
             sched += param.grad.lazydata.schedule(seen)
 
     return [x for x in sched if x.ast.op not in LoadOps]
 
 
-def apply_optimizations_training(head, bs):
+def apply_optimizations_training(model, bs):
     device = cast(Compiled, Device[Device.DEFAULT])
     db = shelve.open("./cache/opt_db")
 
-    for _, si in enumerate(sched_for_training(head, bs)):
+    for _, si in enumerate(sched_for_training(model, bs)):
         lin = Linearizer(si.ast, device.linearizer_opts)
         if (key := str(lin.ast)) in db:
             for ao in db[key]:
@@ -97,15 +98,19 @@ if __name__ == "__main__":
     if getenv("TRAIN"):
         Tensor.training = True
         Tensor.no_grad = False
-        head = Head()
-        sched = sched_for_training(head, getenv("BS", 32))
+        model = Model()
+        sched = sched_for_training(model, getenv("BS", 32))
     else:
         Tensor.training = False
         Tensor.no_grad = True
-        foundation, head = get_foundation(), Head()
-        sched = sched_for_inference(foundation, head)
+        foundation, model = get_foundation(), Model()
+        sched = sched_for_inference(foundation, model)
 
     print(f"found {len(sched)} kernels")
+
+    if getenv("KERNEL", -1) >= 0:
+        sched = sched[getenv("KERNEL", -1) : getenv("KERNEL", -1) + 1]
+        print(f"optimizing kernel {getenv('KERNEL', -1)}")
 
     total_tm = 0
     running_gflops = 0
@@ -126,39 +131,19 @@ if __name__ == "__main__":
             for ao in beam_db[str(lin.ast)]:
                 lin.apply_opt(ao)
         else:
-            best_tm = float("inf")
-            beam = [lin]
-            while True:
-                acted_lins = flatten(
-                    [get_linearizer_actions(lin).items() for lin in beam]
-                )
-                timed_lins = [
-                    (v, time_linearizer(v, rawbufs)) for k, v in acted_lins if k != 0
-                ]
-                opts = sorted(timed_lins, key=lambda x: x[1])
-                if len(opts) == 0 or best_tm <= opts[0][1]:
-                    break
-                best_tm = opts[0][1]
-                beam = [x[0] for x in opts[:4]]
-                print(
-                    f"{opts[0][1]*1e3:10.2f} ms from {len(opts):3d} actions",
-                    beam[0].colored_shape(),
-                )
-            lin = beam[0]
+            lin = beam_search(lin, rawbufs, 4, True)
             beam_db[str(lin.ast)] = lin.applied_opts
         lins.append(lin)
 
         choices = []
         for lin in lins:
-            tm = time_linearizer(
-                lin, rawbufs, allow_test_size=False, cnt=10, should_copy=False
-            )
+            tm = time_linearizer(lin, rawbufs, allow_test_size=False, cnt=10)
             gflops = (
                 sym_infer(lin.info.flops, {k: k.min for k in vars_from_ast(lin.ast)})
                 * 1e-9
                 / tm
             )
-            choices.append((tm, gflops, lin))
+            choices.append((tm, gflops, lin.linearize()))
 
             print(
                 f"                 kernel {i:2d} {lin.display_name+' '*(37-ansilen(lin.display_name))} {str(lin.global_size):18s} {str(lin.local_size):12s} takes {tm*1000:7.2f} ms, {gflops:6.0f} GFLOPS"
