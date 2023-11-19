@@ -4,11 +4,7 @@
   inputs = {
     nixpkgs.url = "github:nixos/nixpkgs/nixpkgs-unstable";
     flake-utils.url = "github:numtide/flake-utils";
-
-    tinygrad = {
-      url = "github:tinygrad/tinygrad";
-      flake = false;
-    };
+    tinygrad.url = "github:wozeparrot/tinygrad-nix";
   };
 
   outputs = inputs @ {
@@ -23,29 +19,13 @@
       in {
         devShell = pkgs.mkShell {
           packages = let
-            python-packages = p: let
-              tinygrad = p.buildPythonPackage {
-                pname = "tinygrad";
-                version = inputs.tinygrad.shortRev;
-                src = inputs.tinygrad;
-                doCheck = false;
-                propagatedBuildInputs = with p; [
-                  networkx
-                  numpy
-                  pillow
-                  pyopencl
-                  pyyaml
-                  requests
-                  tqdm
-                ];
-              };
-            in
+            python-packages = p:
               with p; [
                 pydot
-                tinygrad
+                inputs.tinygrad.packages.${system}.default
                 torch
                 (opencv4.override {
-                   enableGtk3 = true;
+                  enableGtk3 = true;
                 })
                 wandb
                 onnx
