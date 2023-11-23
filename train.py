@@ -1,12 +1,11 @@
 import glob
 import math
 import random
-import gc
+from multiprocessing import Queue, Process
 
 from tinygrad.tensor import Tensor
-from tinygrad.helpers import dtypes
 from tinygrad.jit import TinyJit
-from tinygrad.nn.optim import LAMB
+from tinygrad.nn.optim import AdamW
 from tinygrad.nn.state import (
     get_parameters,
     get_state_dict,
@@ -15,22 +14,23 @@ from tinygrad.nn.state import (
     safe_save,
 )
 from tqdm import trange
-import numpy as np
 import wandb
+import cv2
 
 from model import Model
 from main import BASE_PATH
 
 
-BS = 32
-WARMUP_STEPS = 20
-START_LR = 0.002
+BS = 16
+WARMUP_STEPS = 200
+START_LR = 0.001
 END_LR = 0.000001
-STEPS = 2000 * 30
+STEPS = 500000
 
 
 def loss_fn(pred, y):
-    detected_loss = (pred[:, 0] - y[:, 0]).pow(2).sum()
+    # return (pred[:, :3] - y[:, :3]).pow(2).sum()
+    detected_loss = (pred[:, 0] - y[:, 0]).pow(2).mean()
     x_loss = (pred[:, 1] - y[:, 1]).mul(pred[:, 0] + y[:, 0] + 0.5).pow(2).sum()
     y_loss = (pred[:, 2] - y[:, 2]).mul(pred[:, 0] + y[:, 0] + 0.5).pow(2).sum()
     return detected_loss + x_loss + y_loss
@@ -40,43 +40,46 @@ def loss_fn(pred, y):
 def train_step(x, y, lr):
     pred = model(x, y[:, 3].unsqueeze(1))
     loss = loss_fn(pred, y)
+
     optim.lr.assign(lr + 0.00001 - 0.00001).realize()
     optim.zero_grad()
     loss.backward()
+
+    # calculate grad norm
+    grad_norm = Tensor([0], requires_grad=False)
+    for p in get_parameters(model):
+        if p.grad is not None:
+            grad_norm.assign(grad_norm + p.grad.pow(2).sum()).realize()
+
     optim.step()
-    return loss.realize()
+
+    return loss.realize(), grad_norm.realize()
 
 
-preprocessed_train_files = glob.glob(str(BASE_PATH / "preprocessed/*.npz"))
-preprocessed_train_data_loaded = [np.load(file) for file in preprocessed_train_files]
+preprocessed_train_files = glob.glob(str(BASE_PATH / "preprocessed/*.png"))
 
 
-def minibatch_iterator():
+def load_single_file(file):
+    img = cv2.imread(file)
+    # read the annotation file
+    annotation_file = file.replace(".png", ".txt")
+    with open(annotation_file, "r") as f:
+        detected, x, y, color = f.readline().split(" ")
+        detected, color = int(detected), int(color)
+        x, y = float(x), float(y)
+    return img, (detected, x, y, color)
+
+
+def minibatch_iterator(q: Queue):
     while True:
-        random.shuffle(preprocessed_train_data_loaded)
-        for chunk in preprocessed_train_data_loaded:
-            # load chunk into memory
-            chunk = {x: y for x, y in chunk.items()}
-            order = list(range(0, chunk["y"].shape[0]))
-            random.shuffle(order)
-            for i in range(0, chunk["y"].shape[0] - BS, BS):
-                yield (
-                    Tensor(
-                        chunk["x"][order[i : i + BS]],
-                        requires_grad=False,
-                        dtype=dtypes.float32,
-                    ),
-                    Tensor(
-                        chunk["y"][order[i : i + BS]],
-                        requires_grad=False,
-                        dtype=dtypes.float32,
-                    ),
-                )
+        random.shuffle(preprocessed_train_files)
+        for i in range(0, len(preprocessed_train_files) - BS, BS):
+            batched = map(load_single_file, preprocessed_train_files[i : i + BS])
+            x_b, y_b = zip(*batched)
+            q.put((list(x_b), list(y_b)))
 
 
 if __name__ == "__main__":
-    from optimize import apply_optimizations_training
-
     Tensor.no_grad = False
     Tensor.training = True
 
@@ -91,11 +94,21 @@ if __name__ == "__main__":
     )
 
     model = Model()
-    apply_optimizations_training(model, BS)
-    optim = LAMB(get_parameters(model), wd=0.0005)
+
+    sn_state_dict = safe_load("./weights/shufflenetv2.safetensors")
+    load_state_dict(model.backbone, sn_state_dict)
+
+    # state_dict = safe_load(str(BASE_PATH / "model.safetensors"))
+    # load_state_dict(model, state_dict)
+
+    optim = AdamW(get_parameters(model), wd=0.0001)
+
+    # start batch iterator in a separate process
+    bi_queue = Queue(4)
+    bi = Process(target=minibatch_iterator, args=(bi_queue,))
+    bi.start()
 
     warming_up = True
-    batch_iterator = minibatch_iterator()
     for step in (t := trange(STEPS)):
         if warming_up:
             new_lr = START_LR * (step / WARMUP_STEPS)
@@ -107,18 +120,23 @@ if __name__ == "__main__":
             )
 
         if step == 0:
-            x, y = next(batch_iterator)
-        loss = train_step(x, y, Tensor([new_lr], requires_grad=False))
-        x, y = next(batch_iterator)
-        loss = loss.numpy().item()
-        t.set_description(f"loss: {loss:.6f}, lr: {optim.lr.numpy().item():.12f}")
+            x, y = bi_queue.get()
+            x, y = Tensor(x, requires_grad=False), Tensor(y, requires_grad=False)
+        loss, grad_norm = train_step(x, y, Tensor([new_lr], requires_grad=False))
+        x, y = bi_queue.get()
+        x, y = Tensor(x, requires_grad=False), Tensor(y, requires_grad=False)
+        loss, grad_norm = loss.numpy().item(), grad_norm.numpy().item()
+        t.set_description(f"loss: {loss:.6f}, lr: {optim.lr.numpy().item():.12f}, grad_norm: {grad_norm:.6f}")
         wandb.log(
             {
                 "loss": loss,
                 "lr": optim.lr.numpy().item(),
+                "grad_norm": grad_norm,
             }
         )
 
-        if step % 1000 == 0:
-            safe_save(get_state_dict(model), str(BASE_PATH / f"model.safetensors"))
+        if step % 10000 == 0:
+            safe_save(get_state_dict(model), str(BASE_PATH / f"intermediate/model_{step}.safetensors"))
     safe_save(get_state_dict(model), str(BASE_PATH / f"model.safetensors"))
+
+    bi.terminate()
