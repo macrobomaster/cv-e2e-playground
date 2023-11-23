@@ -9,13 +9,11 @@ build/
 *.so
 tinygrad/
 
-# ignore model weights
-weights/
+# ignore downloaded model weights
 *.pth
 *.pkl
 *.pkl.json
 *.bin
-*.safetensors
 
 # ignore training data
 annotated/
