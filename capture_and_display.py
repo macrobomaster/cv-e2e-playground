@@ -15,7 +15,12 @@ class ThreadedCapture(Process):
         if isinstance(src, int):
             self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, frame_size[0])
             self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, frame_size[1])
-            self.cap.set(cv2.CAP_PROP_FPS, 60)
+            self.cap.set(cv2.CAP_PROP_AUTO_WB, 0)
+            self.cap.set(cv2.CAP_PROP_SATURATION, 100)
+            self.cap.set(cv2.CAP_PROP_CONTRAST, 50)
+            self.cap.set(cv2.CAP_PROP_BRIGHTNESS, 10)
+            self.cap.set(cv2.CAP_PROP_AUTO_EXPOSURE, 0)
+            self.cap.set(cv2.CAP_PROP_FPS, 120)
 
         self.killed = False
 
@@ -48,5 +53,4 @@ class ThreadedOutput(Process):
     def run(self):
         while not self.killed:
             f = self.q.get()
-            _, jpeg = cv2.imencode(".jpg", f)
-            sys.stdout.buffer.write(jpeg.tobytes())
+            cv2.imshow("frame", f)
