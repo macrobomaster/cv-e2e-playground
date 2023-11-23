@@ -2,7 +2,7 @@
   description = "";
 
   inputs = {
-    nixpkgs.url = "github:nixos/nixpkgs/nixpkgs-unstable";
+    nixpkgs.url = "github:nixos/nixpkgs/nixos-unstable";
     flake-utils.url = "github:numtide/flake-utils";
     tinygrad.url = "github:wozeparrot/tinygrad-nix";
   };
@@ -15,14 +15,19 @@
     flake-utils.lib.eachDefaultSystem
     (
       system: let
-        pkgs = nixpkgs.legacyPackages.${system};
+        pkgs = import nixpkgs {
+          inherit system;
+          overlays = [
+            inputs.tinygrad.overlays.default
+          ];
+        };
       in {
         devShell = pkgs.mkShell {
           packages = let
             python-packages = p:
               with p; [
                 pydot
-                inputs.tinygrad.packages.${system}.default
+                tinygrad
                 torch
                 (opencv4.override {
                   enableGtk3 = true;
