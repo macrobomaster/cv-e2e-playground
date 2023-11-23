@@ -4,50 +4,16 @@ import time
 import os
 
 import cv2
-from tinygrad.helpers import dtypes
 from tinygrad.tensor import Tensor
 from tinygrad.jit import TinyJit
-from tinygrad.nn.state import safe_load, load_state_dict, get_parameters
-from yolov8 import get_variant_multiples, Darknet
+from tinygrad.nn.state import safe_load, load_state_dict
 
 from capture_and_display import ThreadedCapture, ThreadedOutput
 from model import Model
-from utils import download_file
 from smoother import Smoother
-from optimize import apply_optimizations_inference
 
 
 BASE_PATH = Path(os.environ.get("BASE_PATH", "./"))
-
-
-def get_foundation():
-    yolo_variant = "n"
-    depth, width, ratio = get_variant_multiples(yolo_variant)
-    net = Darknet(width, ratio, depth)
-
-    weights_location = Path("./cache/") / f"yolov8{yolo_variant}.safetensors"
-    download_file(
-        f"https://gitlab.com/r3sist/yolov8_weights/-/raw/master/yolov8{yolo_variant}.safetensors",
-        weights_location,
-    )
-
-    state_dict = safe_load(str(weights_location))
-    load_state_dict({"net": net}, state_dict)
-    for param in get_parameters(net):
-        param.assign(param.cast(dtypes.float32)).realize()
-
-    def foundation(img):
-        x = net(img.permute(0, 3, 1, 2).float() / 255)
-        # x5 = upsample(x5, 2)
-        # x3 = x3.pad2d((1, 1, 1, 1)).avg_pool2d(3, 2)
-        # x2 = (
-        #     x2.pad2d((1, 1, 1, 1)).avg_pool2d(3, 2).pad2d((1, 1, 1, 1)).avg_pool2d(3, 2)
-        # )
-        return x[-1]
-
-    setattr(foundation, "net", net)
-
-    return foundation
 
 
 if __name__ == "__main__":
@@ -62,17 +28,15 @@ if __name__ == "__main__":
     # out = ThreadedOutput(out_queue)
     # out.start()
 
-    foundation = get_foundation()
     model = Model()
     load_state_dict(model, safe_load(str(BASE_PATH / "model.safetensors")))
-    apply_optimizations_inference(foundation, model)
     smoother_x, smoother_y = Smoother(), Smoother()
 
     @TinyJit
     def pred(img, color):
-        return model(foundation(img), color)[0].realize()
+        return model(img, color)[0].realize()
 
-    cap = cv2.VideoCapture("out2.mp4")
+    cap = cv2.VideoCapture("2744.mp4")
 
     color = "red"
     st = time.perf_counter()
@@ -84,14 +48,13 @@ if __name__ == "__main__":
             break
         # convert to rgb
         frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-        frame = frame[:, 106:746]
-        # frame = frame[:, 212:]
+        frame = frame[-352:, -352:]
 
-        img = Tensor(frame).reshape(1, 480, 640, 3)
+        img = Tensor(frame).reshape(1, 352, 352, 3)
         x = pred(img, Tensor([[0]]) if color == "red" else Tensor([[1]]))
 
         # show detection
-        detected, x, y, _ = x.numpy()
+        detected, x, y = x.numpy()
         dt = time.perf_counter() - st
         st = time.perf_counter()
         cv2.putText(
@@ -105,11 +68,19 @@ if __name__ == "__main__":
         )
         x, y = smoother_x.update(x, dt), smoother_y.update(y, dt)
         print(detected, x, y)
-        if detected > 0.5:
+        cv2.putText(
+            frame,
+            f"{detected:.3f}, {x:.3f}, {y:.3f}",
+            (10, 90),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            1,
+            (55, 250, 55),
+            2,
+        )
+        if detected > 0.0:
             print(f"detected at {x}, {y}")
-            # unscale to pixels
-            x = x * 320 + 320
-            y = y * 240 + 240
+            x = x * 176 + 176
+            y = y * 176 + 176
             cv2.circle(frame, (int(x), int(y)), 10, (0, 50, 255), -1)
             cv2.putText(
                 frame,
