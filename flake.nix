@@ -4,7 +4,7 @@
   inputs = {
     nixpkgs.url = "github:nixos/nixpkgs/nixos-unstable";
     flake-utils.url = "github:numtide/flake-utils";
-    tinygrad.url = "github:wozeparrot/tinygrad-nix";
+    tinygrad.url = "github:wozeparrot/tinygrad-nix/9dc15f3f8dd2021522690ad514967e7589d77503";
   };
 
   outputs = inputs @ {
@@ -44,10 +44,13 @@
           in
             with pkgs; [
               (python.withPackages python-packages)
-
-              # needed for GRAPH=1 to work
               graphviz
+              llvmPackages_latest.clang
             ];
+
+          shellHook = ''
+            export HIP_PATH="${pkgs.rocmPackages.clr}"
+          '';
         };
       }
     );
