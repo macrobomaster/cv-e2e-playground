@@ -8,7 +8,7 @@ import numpy as np
 
 from main import BASE_PATH
 
-IMG_SIZE = 224
+IMG_SIZE = 256
 RANDOM_TRANSLATE_COUNT = 0
 FLIP_COLOR_COUNT = 0
 
@@ -31,19 +31,19 @@ def random_translate(img, x, y):
   return img, x, y
 
 detected_count, non_detected_count = 0, 0
-def add_to_batch(x_b, y_b, detected, color, img, x, y):
+def add_to_batch(x_b, y_b, detected, color, img, x, y, raw=True):
   global detected_count, non_detected_count
 
   if color == -1: detected = 0
 
-  if x < 0 or x >= IMG_SIZE or y < 0 or y >= IMG_SIZE: detected = 0
-
-  # scale between 0 and 1
-  x = x / IMG_SIZE
-  y = y / IMG_SIZE
+  if raw:
+    if x < 0 or x >= IMG_SIZE or y < 0 or y >= IMG_SIZE: detected = 0
+    # scale between 0 and 1
+    x = x / IMG_SIZE
+    y = y / IMG_SIZE
 
   if not detected:
-    if random.random() > 0.05: return
+    if random.random() > 0.2: return
     x, y, color = 0.5, 0.5, random.randint(0, 1)
     non_detected_count += 1
   else: detected_count += 1
@@ -83,14 +83,14 @@ def get_train_data(only_detected=False):
 
     # brightness and contrast
     for i in range(len(x_b)):
-      add_to_batch(x_b, y_b, detected, color, cv2.convertScaleAbs(x_b[i], alpha=random.uniform(0.8, 1.2), beta=random.uniform(-50, 50)), x, y)
+      add_to_batch(x_b, y_b, y_b[i][0], y_b[i][3], cv2.convertScaleAbs(x_b[i], alpha=random.uniform(0.8, 1.2), beta=random.uniform(-50, 50)), y_b[i][1], y_b[i][2], raw=False)
 
     # adjust saturation
     for i in range(len(x_b)):
       hsv = cv2.cvtColor(x_b[i], cv2.COLOR_RGB2HSV)
       hsv[:, :, 1] = hsv[:, :, 1] * random.uniform(0.8, 1.2)
       hsv[:, :, 1] = np.clip(hsv[:, :, 1], 0, 255)
-      x_b[i] = cv2.cvtColor(hsv, cv2.COLOR_HSV2RGB)
+      add_to_batch(x_b, y_b, y_b[i][0], y_b[i][3], cv2.cvtColor(hsv, cv2.COLOR_HSV2RGB), y_b[i][1], y_b[i][2], raw=False)
 
     # filter out non detected if only detected
     if only_detected:
