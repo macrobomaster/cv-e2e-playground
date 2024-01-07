@@ -5,7 +5,9 @@ from main import BASE_PATH
 
 preprocessed_train_files = glob.glob(str(BASE_PATH / "preprocessed/*.png"))
 
-for file in preprocessed_train_files:
+i = 0
+while i < len(preprocessed_train_files):
+  file = preprocessed_train_files[i]
   img = cv2.imread(file)
   # read the annotation file
   annotation_file = file.replace(".png", ".txt")
@@ -22,5 +24,7 @@ for file in preprocessed_train_files:
 
   key = cv2.waitKey(0)
   if key == ord("q"): break
+  elif key == ord("a"): i -= 1
+  else: i += 1
 
 cv2.destroyAllWindows()
