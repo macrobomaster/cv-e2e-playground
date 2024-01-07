@@ -1,11 +1,11 @@
 from typing import Tuple
 from tinygrad.tensor import Tensor, Device
-from tinygrad.nn import Conv2d, BatchNorm2d
+from tinygrad.nn import Conv2d, BatchNorm2d, Linear
 
 def channel_shuffle(x: Tensor) -> Tuple[Tensor, Tensor]:
   b, c, h, w = x.shape
   assert c % 4 == 0
-  x = x.reshape(b * c // 2, w, h * 2).permute(1, 0, 2)
+  x = x.reshape(b * c // 2, 2, h * w).permute(1, 0, 2)
   x = x.reshape(2, -1, c // 2, h, w)
   return x[0], x[1]
 
@@ -62,6 +62,8 @@ class ShuffleNetV2:
     self.stage4 = [ShuffleV2Block(stage_out_channels[2], stage_out_channels[3], stage_out_channels[3] // 2, kernel_size=3, stride=2)]
     self.stage4 += [ShuffleV2Block(stage_out_channels[3] // 2, stage_out_channels[3], stage_out_channels[3] // 2, 3, 1) for _ in range(stage_repeats[2] - 1)]
     self.stage5 = [Conv2d(stage_out_channels[3], stage_out_channels[4], 1, 1, 0, bias=False), BatchNorm2d(1024, track_running_stats=False), lambda x: x.relu()]
+
+    # self.classifier = [Linear(stage_out_channels[4], 1000, bias=False)]
 
   def __call__(self, x: Tensor) -> Tensor:
     x = x.sequential(self.stage1).pad2d((1, 1, 1, 1)).max_pool2d(3, 2)
@@ -137,12 +139,24 @@ if __name__ == "__main__":
         del state_dict[key]
 
   for key in list(state_dict.keys()):
-    if "classifier" in key: continue
+    # if "classifier" in key: continue
     print(f"Loading {key}...")
     get_child(net, key.replace("module.", "")).assign(state_dict[key].to(Device.DEFAULT)).realize()
 
   for param in get_parameters(state_dict):
     param.assign(param.cast(dtypes.float32)).realize()
+
+  # verification
+  # import cv2, ast
+  # from tinygrad.helpers import fetch
+  # img = cv2.imread("dog.jpeg")
+  # img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+  # img = cv2.resize(img, (224, 224))
+  # img = Tensor(img).reshape(1, 224, 224, 3).permute(0, 3, 1, 2)
+  # print(img.shape)
+  # pred = net(img)
+  # lbls = ast.literal_eval(fetch("https://gist.githubusercontent.com/yrevar/942d3a0ac09ec9e5eb3a/raw/238f720ff059c1f82f368259d1ca4ffa5dd8f9f5/imagenet1000_clsidx_to_labels.txt").read_text())
+  # print(pred.argmax(1).item(), pred.max(1).item(), lbls[pred.argmax(1).item()])
 
   # save state_dict
   safe_save(get_state_dict(net), "./weights/shufflenetv2.safetensors")
