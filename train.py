@@ -14,13 +14,13 @@ from model import Model
 from main import BASE_PATH
 
 BS = 16
-WARMUP_STEPS = 200
-START_LR = 0.0002
-END_LR = 0.00005
-STEPS = 20001
+WARMUP_STEPS = 500
+START_LR = 0.001
+END_LR = 0.0005
+STEPS = 10001
 
 def loss_fn(pred: tuple[Tensor, Tensor], y: Tensor):
-  obj_loss = (pred[0][:, 0, :] - y[:, 0:1]).pow(2).mean()
+  obj_loss = pred[0][:, 0, 0].binary_crossentropy_logits(y[:, 0])
   x_loss = (pred[1][:, 0, 0] - y[:, 1]).abs().mean()
   y_loss = (pred[1][:, 0, 1] - y[:, 2]).abs().mean()
   return obj_loss + x_loss + y_loss
@@ -105,7 +105,7 @@ if __name__ == "__main__":
     sys.exit(0)
   signal.signal(signal.SIGINT, sigint_handler)
 
-  with Context(BEAM=0):
+  with Context(BEAM=2):
     warming_up = True
     for step in (t := trange(STEPS)):
       GlobalCounters.reset()
