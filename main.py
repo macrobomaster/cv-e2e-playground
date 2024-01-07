@@ -49,9 +49,9 @@ if __name__ == "__main__":
       if not ret: break
       # convert to rgb
       frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-      frame = frame[-224:, -224:]
+      frame = frame[-256:, -256:]
 
-      img = Tensor(frame).reshape(1, 224, 224, 3)
+      img = Tensor(frame).reshape(1, 256, 256, 3)
       obj, pos = pred(img)
 
       # show detection
@@ -64,8 +64,8 @@ if __name__ == "__main__":
       cv2.putText(frame, f"{detected:.3f}, {x:.3f}, {y:.3f}", (10, 60), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (55, 250, 55), 1)
       if True:
         print(f"detected at {x}, {y}")
-        x = x * 224
-        y = y * 224
+        x = x * 256
+        y = y * 256
         cv2.circle(frame, (int(x), int(y)), 10, (0, 50, 255), -1)
         cv2.putText(frame, f"{int(x)}, {int(y)}", (int(x), int(y)), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (55, 250, 55), 2)
 
