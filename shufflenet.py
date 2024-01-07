@@ -139,7 +139,7 @@ if __name__ == "__main__":
         del state_dict[key]
 
   for key in list(state_dict.keys()):
-    # if "classifier" in key: continue
+    if "classifier" in key: continue
     print(f"Loading {key}...")
     get_child(net, key.replace("module.", "")).assign(state_dict[key].to(Device.DEFAULT)).realize()
 
