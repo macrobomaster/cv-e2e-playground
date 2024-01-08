@@ -1,7 +1,7 @@
 from itertools import chain
 
 from tinygrad.nn import Conv2d, Linear, BatchNorm2d
-from tinygrad.tensor import Tensor
+from tinygrad import Tensor, dtypes
 
 from shufflenet import ShuffleNetV2
 
@@ -24,13 +24,13 @@ class DFCAttention:
     self.vnorm = BatchNorm2d(dim)
 
   def __call__(self, x: Tensor) -> Tensor:
-    assert x.shape[-1] % 2 == 0 and x.shape[-2] % 2 == 0, "attention input must be divisible by 2"
+    assert x.shape[-1] % 2 == 0 and x.shape[-2] % 2 == 0, f"attention input must be divisible by 2, got {x.shape}"
     # downsample
     xx = x.avg_pool2d(2)
     # attention map
-    xx = self.norm(self.cv(xx))
-    xx = self.hnorm(self.hcv(xx))
-    xx = self.vnorm(self.vcv(xx))
+    xx = self.norm(self.cv(xx).float()).cast(dtypes.default_float)
+    xx = self.hnorm(self.hcv(xx).float()).cast(dtypes.default_float)
+    xx = self.vnorm(self.vcv(xx).float()).cast(dtypes.default_float)
     xx = xx.sigmoid()
     # upsample
     return upsample(xx, 2)
@@ -45,8 +45,8 @@ class EncoderBlock:
 
   def __call__(self, x: Tensor):
     x = x + x * self.attention(x)
-    x = self.cv1(self.norm1(x)).gelu()
-    return self.norm2(x + self.cv2(x))
+    x = self.cv1(self.norm1(x.float()).cast(dtypes.default_float)).gelu()
+    return self.norm2((x + self.cv2(x)).float()).cast(dtypes.default_float)
 
 class EncoderDecoder:
   def __init__(self, dim):
@@ -54,14 +54,14 @@ class EncoderDecoder:
 
     self.cv1 = Conv2d(dim, dim, kernel_size=5, bias=False)
     self.norm1 = BatchNorm2d(dim)
-    self.cv2 = Conv2d(dim, dim, kernel_size=3, bias=False)
+    self.cv2 = Conv2d(dim, dim, kernel_size=5, bias=False)
     self.norm2 = BatchNorm2d(dim)
     self.cv_out = Conv2d(dim, dim, kernel_size=1, bias=False)
 
   def __call__(self, x: Tensor):
     x = x.sequential(self.encoders)
-    x = self.cv1(self.norm1(x)).gelu()
-    x = self.cv2(self.norm2(x)).gelu()
+    x = self.cv1(self.norm1(x.float()).cast(dtypes.default_float)).gelu()
+    x = self.cv2(self.norm2(x.float()).cast(dtypes.default_float)).gelu()
     x = self.cv_out(x).avg_pool2d(2)
     x = x.reshape(x.shape[0], -1)
     return x
@@ -69,7 +69,9 @@ class EncoderDecoder:
 class ObjHead:
   def __init__(self, dim, num_outputs):
     self.l1 = Linear(dim, num_outputs)
-  def __call__(self, x: Tensor): return self.l1(x).reshape(x.shape[0], -1, 1)
+  def __call__(self, x: Tensor):
+    if Tensor.training: return self.l1(x).reshape(x.shape[0], -1, 1)
+    else: return self.l1(x).sigmoid().reshape(x.shape[0], -1, 1)
 
 class PosHead:
   def __init__(self, dim, num_outputs):
@@ -94,7 +96,9 @@ class Model:
 
   def __call__(self, img: Tensor):
     # image normalization
-    img = img.permute(0, 3, 1, 2).float() / 255
+    if Tensor.training: img = img.float()
+    else: img = img.cast(dtypes.default_float)
+    img = img.permute(0, 3, 1, 2) / 255
 
     x = self.backbone(img)
     x = self.input_conv(x)
@@ -102,4 +106,7 @@ class Model:
 
     x_obj = self.obj_head(x)
     x_pos = self.pos_head(x)
+
+    # cast to correct output type
+    if not Tensor.training: x_obj, x_pos = x_obj.cast(dtypes.default_float), x_pos.cast(dtypes.default_float)
     return x_obj, x_pos
