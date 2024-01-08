@@ -5,9 +5,9 @@ import os
 
 import cv2
 from tinygrad.helpers import Context
-from tinygrad.tensor import Tensor
+from tinygrad import Tensor, dtypes
 from tinygrad.jit import TinyJit
-from tinygrad.nn.state import safe_load, load_state_dict
+from tinygrad.nn.state import safe_load, load_state_dict, get_state_dict
 from tinygrad import GlobalCounters
 
 from capture_and_display import ThreadedCapture, ThreadedOutput
@@ -19,6 +19,7 @@ BASE_PATH = Path(os.environ.get("BASE_PATH", "./"))
 if __name__ == "__main__":
   Tensor.no_grad = True
   Tensor.training = False
+  dtypes.default_float = dtypes.float16
 
   # cap_queue = Queue(4)
   # cap = ThreadedCapture(cap_queue, 1)
@@ -29,7 +30,9 @@ if __name__ == "__main__":
   # out.start()
 
   model = Model()
-  load_state_dict(model, safe_load(str(BASE_PATH / "model.safetensors")))
+  state_dict = safe_load(str(BASE_PATH / "model.safetensors"))
+  load_state_dict(model, state_dict)
+  for param in get_state_dict(model.backbone).values(): param.assign(param.half()).realize()
   smoother_x, smoother_y = Smoother(), Smoother()
 
   @TinyJit
@@ -38,9 +41,10 @@ if __name__ == "__main__":
     return obj[0, 0].realize(), pos[0, 0].realize()
 
   cap = cv2.VideoCapture("2744.mp4")
+  # cap = cv2.VideoCapture(1)
 
   st = time.perf_counter()
-  with Context(BEAM=2):
+  with Context(BEAM=0):
     while True:
       GlobalCounters.reset()
       # frame = cap_queue.get()
@@ -49,9 +53,9 @@ if __name__ == "__main__":
       if not ret: break
       # convert to rgb
       frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-      frame = frame[-256:, -256:]
+      frame = frame[-320:, -320:]
 
-      img = Tensor(frame).reshape(1, 256, 256, 3)
+      img = Tensor(frame).reshape(1, 320, 320, 3)
       obj, pos = pred(img)
 
       # show detection
@@ -59,13 +63,13 @@ if __name__ == "__main__":
       dt = time.perf_counter() - st
       st = time.perf_counter()
       cv2.putText(frame, f"{1/dt:.2f} FPS", (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (55, 250, 55), 1)
-      x, y = smoother_x.update(x, dt), smoother_y.update(y, dt)
       print(detected, x, y)
+      x, y = smoother_x.update(x, dt), smoother_y.update(y, dt)
       cv2.putText(frame, f"{detected:.3f}, {x:.3f}, {y:.3f}", (10, 60), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (55, 250, 55), 1)
       if True:
         print(f"detected at {x}, {y}")
-        x = x * 256
-        y = y * 256
+        x = x * 320
+        y = y * 320
         cv2.circle(frame, (int(x), int(y)), 10, (0, 50, 255), -1)
         cv2.putText(frame, f"{int(x)}, {int(y)}", (int(x), int(y)), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (55, 250, 55), 2)
 

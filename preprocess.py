@@ -8,7 +8,7 @@ import numpy as np
 
 from main import BASE_PATH
 
-IMG_SIZE = 256
+IMG_SIZE = 320
 RANDOM_TRANSLATE_COUNT = 0
 FLIP_COLOR_COUNT = 0
 
