@@ -33,7 +33,10 @@ if __name__ == "__main__":
   state_dict = safe_load(str(BASE_PATH / "model.safetensors"))
   load_state_dict(model, state_dict)
   for key, param in get_state_dict(model).items():
+    if "norm" in key: continue
     if "bn" in key: continue
+    if "stage1.2" in key: continue
+    if "stage5.2" in key: continue
     param.assign(param.half()).realize()
   smoother_x, smoother_y = Smoother(), Smoother()
 

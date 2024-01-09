@@ -27,11 +27,14 @@ def make_Conv2d(n: Conv2d, name: str, x: str):
 def make_BatchNorm2d(n: BatchNorm2d, name: str, x: str):
   assert n.weight is not None and n.bias is not None
   weight = numpy_helper.from_array(n.weight.numpy(), name + ".weight")
+  print(n.weight.dtype)
   bias = numpy_helper.from_array(n.bias.numpy(), name + ".bias")
   mean = numpy_helper.from_array(n.running_mean.numpy(), name + ".mean")
   var = numpy_helper.from_array(n.running_var.numpy(), name + ".var")
-  bn = make_node("BatchNormalization", [x, weight.name, bias.name, mean.name, var.name], [name], name=name, epsilon=n.eps)
-  return bn, [bn], [weight, bias, mean, var]
+  cast1 = make_node("Cast", [x], [name + ".cast1"], name=name + ".cast", to=TensorProto.FLOAT)
+  bn = make_node("BatchNormalization", [cast1.output[0], weight.name, bias.name, mean.name, var.name], [name], name=name, epsilon=n.eps)
+  cast2 = make_node("Cast", [bn.output[0]], [name + ".cast2"], name=name + ".cast", to=TensorProto.FLOAT16)
+  return cast2, [cast1, bn, cast2], [weight, bias, mean, var]
 
 def make_Linear(n: Linear, name: str, x: str):
   weight = numpy_helper.from_array(n.weight.numpy().T, name + ".weight")
@@ -55,7 +58,7 @@ def make_channel_shuffle(channels: int, height: int, width: int, name: str, x: s
   transpose1 = make_node("Transpose", [reshape1.output[0]], [name + ".transpose1"], name=name + ".transpose1", perm=[1, 0, 2])
   shape2 = numpy_helper.from_array(np.array([2, 1, channels // 2, height, width], dtype=np.int64), name + ".shape2")
   reshape2 = make_node("Reshape", [transpose1.output[0], shape2.name], [name + ".reshape2"], name=name + ".reshape2")
-  split = make_node("Split", [reshape2.output[0]], [name + ".split1", name + ".split2"], name=name + ".split", num_outputs=2, axis=0)
+  split = make_node("Split", [reshape2.output[0]], [name + ".split1", name + ".split2"], name=name + ".split", axis=0)
   squeeze_axis = numpy_helper.from_array(np.array([0], dtype=np.int64), name=name + ".squeeze_axis")
   squeeze1 = make_node("Squeeze", [split.output[0], squeeze_axis.name], [name + ".squeeze1"], name=name + ".squeeze1")
   squeeze2 = make_node("Squeeze", [split.output[1], squeeze_axis.name], [name + ".squeeze2"], name=name + ".squeeze2")
@@ -210,9 +213,12 @@ def make_preprocess(name: str, x: str):
 
 if __name__ == "__main__":
   model = Model()
-  load_state_dict(model, safe_load(str(BASE_PATH / "model.safetensors")))
+  # load_state_dict(model, safe_load(str(BASE_PATH / "model.safetensors")))
   for key, param in get_state_dict(model).items():
+    if "norm" in key: continue
     if "bn" in key: continue
+    if "stage1.2" in key: continue
+    if "stage5.2" in key: continue
     param.assign(param.half()).realize()
 
   print(f"there are {sum(param.numel() for param in get_parameters(model)) / 1e6}M params") # type: ignore
@@ -233,6 +239,5 @@ if __name__ == "__main__":
   opset.domain = ""
   opset.version = 14
   model = shape_inference.infer_shapes(model)
-  model = convert_version(model, 18)
   check_model(model, True)
   onnx.save(model, "model.onnx")
