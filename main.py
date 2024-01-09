@@ -32,7 +32,9 @@ if __name__ == "__main__":
   model = Model()
   state_dict = safe_load(str(BASE_PATH / "model.safetensors"))
   load_state_dict(model, state_dict)
-  for param in get_state_dict(model.backbone).values(): param.assign(param.half()).realize()
+  for key, param in get_state_dict(model).items():
+    if "bn" in key: continue
+    param.assign(param.half()).realize()
   smoother_x, smoother_y = Smoother(), Smoother()
 
   @TinyJit
@@ -44,7 +46,7 @@ if __name__ == "__main__":
   # cap = cv2.VideoCapture(1)
 
   st = time.perf_counter()
-  with Context(BEAM=0):
+  with Context(BEAM=4):
     while True:
       GlobalCounters.reset()
       # frame = cap_queue.get()
@@ -66,7 +68,7 @@ if __name__ == "__main__":
       print(detected, x, y)
       x, y = smoother_x.update(x, dt), smoother_y.update(y, dt)
       cv2.putText(frame, f"{detected:.3f}, {x:.3f}, {y:.3f}", (10, 60), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (55, 250, 55), 1)
-      if True:
+      if detected > 0.5:
         print(f"detected at {x}, {y}")
         x = x * 320
         y = y * 320
