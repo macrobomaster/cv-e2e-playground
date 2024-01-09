@@ -24,21 +24,28 @@
       in {
         devShell = pkgs.mkShell {
           packages = let
-            python-packages = p:
+            python-packages = p: let
+              opencv = p.opencv4.override {
+                enableGtk3 = true;
+              };
+              onnxconverter-common = p.onnxconverter-common.override {
+                protobuf = pkgs.protobuf;
+              };
+              albumentations = p.albumentations.override {
+                # opencv4 = opencv;
+              };
+            in
               with p; [
+                # albumentations
+                llvmlite
+                onnx
+                onnxconverter-common
+                onnxruntime
+                opencv
                 pydot
                 tinygrad
                 torch
-                (opencv4.override {
-                  enableGtk3 = true;
-                })
                 wandb
-                onnx
-                onnxruntime
-                (onnxconverter-common.override {
-                  protobuf = protobuf;
-                })
-                llvmlite
               ];
             python = pkgs.python311;
           in

@@ -2,6 +2,7 @@ import glob
 from pathlib import Path
 import random
 
+import albumentations as A
 import cv2
 from tqdm import tqdm
 import numpy as np
@@ -9,26 +10,20 @@ import numpy as np
 from main import BASE_PATH
 
 IMG_SIZE = 320
-RANDOM_TRANSLATE_COUNT = 0
-FLIP_COLOR_COUNT = 0
+DUPE_COUNT = 10
+NON_DETECTED_RATIO = 0.15
 
-def random_translate(img, x, y):
-  img = img.copy()
-
-  # random translate within half the image
-  rand_x = random.randint(-img.shape[1] // 2, img.shape[1] // 2)
-  rand_y = random.randint(-img.shape[0] // 2, img.shape[0] // 2)
-
-  # pad the image because the translate might go out of bounds
-  img = cv2.copyMakeBorder(img, IMG_SIZE // 2, IMG_SIZE // 2, IMG_SIZE // 2, IMG_SIZE // 2, cv2.BORDER_CONSTANT, value=(0, 0, 0))
-
-  # crop a IMG_SIZExIMG_SIZE square around the new center
-  img = img[
-    img.shape[0] // 2 + rand_y - IMG_SIZE // 2 : img.shape[0] // 2 + rand_y + IMG_SIZE // 2,
-    img.shape[1] // 2 + rand_x - IMG_SIZE // 2 : img.shape[1] // 2 + rand_x + IMG_SIZE // 2,
-  ]
-
-  return img, x, y
+PIPELINE = A.Compose([
+  A.Perspective(p=0.25),
+  A.ShiftScaleRotate(shift_limit=0.2, scale_limit=0.1, rotate_limit=10, border_mode=cv2.BORDER_CONSTANT, value=0, p=0.25),
+  A.RandomCrop(IMG_SIZE, IMG_SIZE),
+  A.RandomBrightnessContrast(brightness_limit=0.2, contrast_limit=0.2, p=0.5),
+  A.HueSaturationValue(hue_shift_limit=5, sat_shift_limit=30, val_shift_limit=20, p=0.5),
+  A.CLAHE(p=0.1),
+  A.RGBShift(r_shift_limit=10, g_shift_limit=10, b_shift_limit=10, p=0.5),
+  A.RandomGamma(gamma_limit=(80, 120), p=0.1),
+  A.FancyPCA(alpha=0.1, p=0.5),
+], keypoint_params=A.KeypointParams(format="xy", remove_invisible=False))
 
 detected_count, non_detected_count = 0, 0
 def add_to_batch(x_b, y_b, detected, color, img, x, y, raw=True):
@@ -43,7 +38,7 @@ def add_to_batch(x_b, y_b, detected, color, img, x, y, raw=True):
     y = y / IMG_SIZE
 
   if not detected:
-    if random.random() > 0.2: return
+    if random.random() > NON_DETECTED_RATIO: return
     x, y, color = 0.5, 0.5, random.randint(0, 1)
     non_detected_count += 1
   else: detected_count += 1
@@ -75,22 +70,9 @@ def get_train_data(only_detected=False):
     add_to_batch(x_b, y_b, detected, color, img[img.shape[0] // 2 - (IMG_SIZE // 2) : img.shape[0] // 2 + (IMG_SIZE // 2), img.shape[1] // 2 - (IMG_SIZE // 2) : img.shape[1] // 2 + (IMG_SIZE // 2)], IMG_SIZE // 2 - (img.shape[1] // 2 - x), IMG_SIZE // 2 - (img.shape[0] // 2 - y))
 
     # augment
-    # random translate and pad
-    for _ in range(RANDOM_TRANSLATE_COUNT): add_to_batch(x_b, y_b, detected, color, *random_translate(img, x, y))
-
-    # flip color
-    for _ in range(FLIP_COLOR_COUNT): add_to_batch(x_b, y_b, 0, 1 - color, *random_translate(img, x, y))
-
-    # brightness and contrast
-    for i in range(len(x_b)):
-      add_to_batch(x_b, y_b, y_b[i][0], y_b[i][3], cv2.convertScaleAbs(x_b[i], alpha=random.uniform(0.8, 1.2), beta=random.uniform(-50, 50)), y_b[i][1], y_b[i][2], raw=False)
-
-    # adjust saturation
-    for i in range(len(x_b)):
-      hsv = cv2.cvtColor(x_b[i], cv2.COLOR_RGB2HSV)
-      hsv[:, :, 1] = hsv[:, :, 1] * random.uniform(0.8, 1.2)
-      hsv[:, :, 1] = np.clip(hsv[:, :, 1], 0, 255)
-      add_to_batch(x_b, y_b, y_b[i][0], y_b[i][3], cv2.cvtColor(hsv, cv2.COLOR_HSV2RGB), y_b[i][1], y_b[i][2], raw=False)
+    for _ in range(DUPE_COUNT):
+      transformed = PIPELINE(image=img, keypoints=[(x, y)])
+      add_to_batch(x_b, y_b, detected, color, transformed["image"], transformed["keypoints"][0][0], transformed["keypoints"][0][1])
 
     # filter out non detected if only detected
     if only_detected:
@@ -111,14 +93,6 @@ for i, (x, y) in enumerate(tqdm(get_train_data(False), total=len(train_files))):
     cv2.imwrite(str(BASE_PATH / f"preprocessed/{i:06}_{j:03}.png"), cv2.cvtColor(sx, cv2.COLOR_RGB2BGR))
     with open(str(BASE_PATH / f"preprocessed/{i:06}_{j:03}.txt"), "w") as f:
       f.write(" ".join(str(i) for i in sy))
-
-# for dupe in range(3):
-#   for i, (x, y) in enumerate(tqdm(get_train_data(True), total=len(train_files))):
-#     i += len(train_files) * (dupe + 1)
-#     for j, (sx, sy) in enumerate(zip(x, y)):
-#       cv2.imwrite(str(BASE_PATH / f"preprocessed/{i:06}_{j:03}.png"), cv2.cvtColor(sx, cv2.COLOR_RGB2BGR))
-#       with open(str(BASE_PATH / f"preprocessed/{i:06}_{j:03}.txt"), "w") as f:
-#         f.write(" ".join(str(i) for i in sy))
 
 print(f"detected: {detected_count}, non detected: {non_detected_count}")
 print(f"Ratio: {detected_count / (detected_count + non_detected_count)}")
