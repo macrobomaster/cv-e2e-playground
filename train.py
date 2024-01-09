@@ -17,7 +17,7 @@ BS = 16
 WARMUP_STEPS = 1000
 START_LR = 0.001
 END_LR = 0.0005
-STEPS = 100001
+STEPS = 10001
 
 def loss_fn(pred: tuple[Tensor, Tensor], y: Tensor):
   obj_loss = pred[0][:, 0, 0].binary_crossentropy_logits(y[:, 0])
@@ -90,12 +90,12 @@ if __name__ == "__main__":
 
   model = Model()
 
-  sn_state_dict = safe_load("./weights/shufflenetv2.safetensors")
-  load_state_dict(model.backbone, sn_state_dict)
+  # sn_state_dict = safe_load("./weights/shufflenetv2.safetensors")
+  # load_state_dict(model.backbone, sn_state_dict)
   # for param in get_state_dict(model.backbone).values(): param.assign(param.half()).realize()
 
-  # state_dict = safe_load(str(BASE_PATH / "model.safetensors"))
-  # load_state_dict(model, state_dict)
+  state_dict = safe_load(str(BASE_PATH / "model.safetensors"))
+  load_state_dict(model, state_dict)
 
   parameters_backbone, parameters = [], []
   for key, value in get_state_dict(model).items():
@@ -123,10 +123,10 @@ if __name__ == "__main__":
       new_lr = get_lr(step)
       if step == 0:
         x, y = bi_queue.get()
-        x, y = Tensor(x, dtype=dtypes.uint8), Tensor(y, dtype=dtypes.half)
+        x, y = Tensor(x, dtype=dtypes.uint8), Tensor(y, dtype=dtypes.default_float)
       loss, grad_norm = train_step(x, y, Tensor([new_lr], dtype=dtypes.float32))
       x, y = bi_queue.get()
-      x, y = Tensor(x, dtype=dtypes.uint8), Tensor(y, dtype=dtypes.half)
+      x, y = Tensor(x, dtype=dtypes.uint8), Tensor(y, dtype=dtypes.default_float)
       loss, grad_norm, lr_backbone, lr = loss.item(), grad_norm.item(), optim_backbone.lr.item(), optim.lr.item()
       t.set_description(f"loss: {loss:6.6f}, grad_norm: {grad_norm:6.6f}, backbone_lr: {lr_backbone:12.12f}, lr: {lr:12.12f}")
       wandb.log({
