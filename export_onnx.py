@@ -44,12 +44,10 @@ def make_Linear(n: Linear, name: str, x: str):
     return gemm, [gemm], [weight]
 
 def make_mish(name: str, x: str):
-  # softplus = make_node("Softplus", [x], [name + ".softplus"], name=name + ".softplus")
-  # tanh = make_node("Tanh", [softplus.output[0]], [name + ".tanh"], name=name + ".tanh")
-  # mul = make_node("Mul", [x, tanh.output[0]], [name], name=name)
-  # return mul, [softplus, tanh, mul], []
-  mish = make_node("Mish", [x], [name], name=name)
-  return mish, [mish], []
+  softplus = make_node("Softplus", [x], [name + ".softplus"], name=name + ".softplus")
+  tanh = make_node("Tanh", [softplus.output[0]], [name + ".tanh"], name=name + ".tanh")
+  mul = make_node("Mul", [x, tanh.output[0]], [name], name=name)
+  return mul, [softplus, tanh, mul], []
 
 def make_channel_shuffle(channels: int, height: int, width: int, name: str, x: str):
   shape1 = numpy_helper.from_array(np.array([1 * channels // 2, 2, height * width], dtype=np.int64), name + ".shape1")
@@ -233,7 +231,7 @@ if __name__ == "__main__":
   del model.opset_import[:]
   opset = model.opset_import.add()
   opset.domain = ""
-  opset.version = 18
+  opset.version = 14
   model = shape_inference.infer_shapes(model)
   model = convert_version(model, 18)
   check_model(model, True)
