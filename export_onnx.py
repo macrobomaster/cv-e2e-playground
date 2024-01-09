@@ -1,29 +1,31 @@
 from typing import Tuple
 
-from tinygrad.nn.state import get_parameters, load_state_dict, safe_load
-from tinygrad.nn import Conv2d, Embedding, Linear, BatchNorm2d
+from tinygrad.nn.state import get_parameters, load_state_dict, safe_load, get_state_dict
+from tinygrad.nn import Conv2d, Linear, BatchNorm2d
 import onnx
-from onnx import numpy_helper, TensorProto
+from onnx import numpy_helper, shape_inference
+from onnx.onnx_pb import TensorProto
 from onnx.helper import make_graph, make_model, make_node, make_tensor_value_info
 from onnx.checker import check_model
-from onnxconverter_common import float16
+from onnx.version_converter import convert_version
 import numpy as np
 
-from main import get_foundation, BASE_PATH
-from model import Model, Head, ConvBlock, SqueezeExcite, ConvEmbedding
-from yolov8 import Darknet, Conv_Block as DarknetConvBlock, Bottleneck as DarknetBottleneck, C2f as DarknetC2f, SPPF as DarknetSPPF
+from main import BASE_PATH
+from model import Model, ObjHead, PosHead, DFCAttention, EncoderBlock, EncoderDecoder
+from shufflenet import ShuffleNetV2, ShuffleV2Block
 
 def make_Conv2d(n: Conv2d, name: str, x: str):
   weight = numpy_helper.from_array(n.weight.numpy(), name + ".weight")
   if n.bias is not None:
     bias = numpy_helper.from_array(n.bias.numpy(), name + ".bias")
-    conv = make_node("Conv", [x, weight.name, bias.name], [name], name=name, pads=[n.padding]*4, kernel_shape=n.kernel_size, group=n.groups, strides=[n.stride]*2)
+    conv = make_node("Conv", [x, weight.name, bias.name], [name], name=name, pads=[n.padding]*4, kernel_shape=n.kernel_size, group=n.groups, strides=[n.stride]*2 if isinstance(n.stride, int) else n.stride)
     return conv, [conv], [weight, bias]
   else:
-    conv = make_node("Conv", [x, weight.name], [name], name=name, pads=[n.padding]*4 if isinstance(n.padding, int) else [p for p in n.padding for _ in range(2)][::-1], kernel_shape=n.kernel_size, group=n.groups, strides=[n.stride]*2)
+    conv = make_node("Conv", [x, weight.name], [name], name=name, pads=[n.padding]*4 if isinstance(n.padding, int) else [p for p in n.padding for _ in range(2)][::-1], kernel_shape=n.kernel_size, group=n.groups, strides=[n.stride]*2 if isinstance(n.stride, int) else n.stride) # type: ignore
     return conv, [conv], [weight]
 
 def make_BatchNorm2d(n: BatchNorm2d, name: str, x: str):
+  assert n.weight is not None and n.bias is not None
   weight = numpy_helper.from_array(n.weight.numpy(), name + ".weight")
   bias = numpy_helper.from_array(n.bias.numpy(), name + ".bias")
   mean = numpy_helper.from_array(n.running_mean.numpy(), name + ".mean")
@@ -31,164 +33,208 @@ def make_BatchNorm2d(n: BatchNorm2d, name: str, x: str):
   bn = make_node("BatchNormalization", [x, weight.name, bias.name, mean.name, var.name], [name], name=name, epsilon=n.eps)
   return bn, [bn], [weight, bias, mean, var]
 
-def make_ConvBlock(n: ConvBlock, name: str, x: str):
-  cv, cv_nodes, cv_weights = make_Conv2d(n.cv, name + ".cv", x)
-  if n.activation:
-    activation = make_node("LeakyRelu", [cv.output[0]], [name + ".leakyrelu"], name=name + ".leakyrelu", alpha=0.01)
-    return activation, [*cv_nodes, activation], [*cv_weights]
-  else:
-    return cv, [*cv_nodes], [*cv_weights]
-
-def make_SqueezeExcite(n: SqueezeExcite, name: str, x: str):
-  avg_pool = make_node("AveragePool", [x], [name + ".avg_pool"], name=name + ".avg_pool", kernel_shape=n.shape, strides=[1, 1])
-  s, s_nodes, s_weights = make_Conv2d(n.s, name + ".s", avg_pool.output[0])
-  relu = make_node("Relu", [s.output[0]], [name + ".relu"], name=name + ".relu")
-  e, e_nodes, e_weights = make_Conv2d(n.e, name + ".e", relu.output[0])
-  sigmoid = make_node("Sigmoid", [e.output[0]], [name + ".sigmoid"], name=name + ".sigmoid")
-  mul = make_node("Mul", [x, sigmoid.output[0]], [name + ".mul"], name=name + ".mul")
-  return mul, [avg_pool, *s_nodes, relu, *e_nodes, sigmoid, mul], [*s_weights, *e_weights]
-
-def make_ConvEmbedding(n: ConvEmbedding, name: str, x: str):
-  cv1, cv1_nodes, cv1_weights = make_ConvBlock(n.cv1, name + ".cv1", x)
-  se, se_nodes, se_weights = make_SqueezeExcite(n.se, name + ".se", cv1.output[0])
-  cv2, cv2_nodes, cv2_weights = make_ConvBlock(n.cv2, name + ".cv2", se.output[0])
-  return cv2, [*cv1_nodes, *se_nodes, *cv2_nodes], [*cv1_weights, *se_weights, *cv2_weights]
-
-def make_Embedding(n: Embedding, name: str, x: str):
-  weight = numpy_helper.from_array(n.weight.numpy(), name + ".weight")
-  gather = make_node("Gather", [weight.name, x], [name], name=name)
-  return gather, [gather], [weight]
-
 def make_Linear(n: Linear, name: str, x: str):
   weight = numpy_helper.from_array(n.weight.numpy().T, name + ".weight")
   if n.bias is not None:
     bias = numpy_helper.from_array(n.bias.numpy(), name + ".bias")
-    matmul = make_node("MatMul", [x, weight.name], [name + ".matmul"], name=name + ".matmul")
-    add = make_node("Add", [matmul.output[0], bias.name], [name + ".reduce"], name=name + ".reduce")
-    return add, [matmul, add], [weight, bias]
+    gemm = make_node("Gemm", [x, weight.name, bias.name], [name], name=name)
+    return gemm, [gemm], [weight, bias]
   else:
-    matmul = make_node("MatMul", [x, weight.name], [name], name=name)
-    return matmul, [matmul], [weight]
+    gemm = make_node("Gemm", [x, weight.name], [name], name=name)
+    return gemm, [gemm], [weight]
 
-def make_Head(head: Head, name: str, x: str, color: str):
-  pads = numpy_helper.from_array(np.array([0, 1, 0, 1], dtype=np.int64), name + ".pads")
-  pad = make_node("Pad", [x, pads.name], [name + ".pad"], name=name + ".pad")
-  cv, cv_nodes, cv_weights = make_ConvBlock(head.cv, name + ".cv", pad.output[0])
+def make_mish(name: str, x: str):
+  # softplus = make_node("Softplus", [x], [name + ".softplus"], name=name + ".softplus")
+  # tanh = make_node("Tanh", [softplus.output[0]], [name + ".tanh"], name=name + ".tanh")
+  # mul = make_node("Mul", [x, tanh.output[0]], [name], name=name)
+  # return mul, [softplus, tanh, mul], []
+  mish = make_node("Mish", [x], [name], name=name)
+  return mish, [mish], []
 
-  conv_emb, conv_emb_nodes, conv_emb_weights = make_ConvEmbedding(head.conv_emb, name + ".conv_emb", cv.output[0])
-  shape = numpy_helper.from_array(np.array([1, head.joint.weight.shape[1]], dtype=np.int64), name + ".shape")
-  reshape = make_node("Reshape", [conv_emb.output[0], shape.name], [name + ".reshape"], name=name + ".reshape")
+def make_channel_shuffle(channels: int, height: int, width: int, name: str, x: str):
+  shape1 = numpy_helper.from_array(np.array([1 * channels // 2, 2, height * width], dtype=np.int64), name + ".shape1")
+  reshape1 = make_node("Reshape", [x, shape1.name], [name + ".reshape1"], name=name + ".reshape1")
+  transpose1 = make_node("Transpose", [reshape1.output[0]], [name + ".transpose1"], name=name + ".transpose1", perm=[1, 0, 2])
+  shape2 = numpy_helper.from_array(np.array([2, 1, channels // 2, height, width], dtype=np.int64), name + ".shape2")
+  reshape2 = make_node("Reshape", [transpose1.output[0], shape2.name], [name + ".reshape2"], name=name + ".reshape2")
+  split = make_node("Split", [reshape2.output[0]], [name + ".split1", name + ".split2"], name=name + ".split", num_outputs=2, axis=0)
+  squeeze_axis = numpy_helper.from_array(np.array([0], dtype=np.int64), name=name + ".squeeze_axis")
+  squeeze1 = make_node("Squeeze", [split.output[0], squeeze_axis.name], [name + ".squeeze1"], name=name + ".squeeze1")
+  squeeze2 = make_node("Squeeze", [split.output[1], squeeze_axis.name], [name + ".squeeze2"], name=name + ".squeeze2")
+  return (squeeze1, squeeze2), [reshape1, transpose1, reshape2, split, squeeze1, squeeze2], [shape1, shape2, squeeze_axis]
 
-  color_emb, color_emb_nodes, color_emb_weights = make_Embedding(head.color_emb, name + ".color_emb", color)
-  squeeze_axis = numpy_helper.from_array(np.array([1], dtype=np.int64), name + ".squeeze_axis")
-  color_emb_squeeze = make_node("Squeeze", [color_emb.output[0], squeeze_axis.name], [name + ".color_emb_squeeze"], name=name + ".color_emb_squeeze")
-  add = make_node("Add", [reshape.output[0], color_emb_squeeze.output[0]], [name + ".add"], name=name + ".add")
-  joint, joint_nodes, joint_weights = make_Linear(head.joint, name + ".joint", add.output[0])
-  joint_lr = make_node("LeakyRelu", [joint.output[0]], [name + ".joint_lr"], name=name + ".joint_lr", alpha=0.01)
-  fc1, fc1_nodes, fc1_weights = make_Linear(head.fc1, name + ".fc1", joint_lr.output[0])
-  fc1_lr = make_node("LeakyRelu", [fc1.output[0]], [name + ".fc1_lr"], name=name + ".fc1_lr", alpha=0.01)
-  l_out, l_out_nodes, l_out_weights = make_Linear(head.l_out, name + ".l_out", fc1_lr.output[0])
+# TODO: this is kinda hacky
+channel_to_hw = {48: 40, 96: 20, 192: 10}
+def make_ShuffleV2Block(n: ShuffleV2Block, name: str, x: str):
+  if n.stride == 1:
+    channel_shuffle, channel_shuffle_nodes, channel_shuffle_weights = make_channel_shuffle(n.outp, channel_to_hw[n.outp], channel_to_hw[n.outp], name + ".channel_shuffle", x)
+    cv1, cv1_nodes, cv1_weights = make_Conv2d(n.cv1, name + ".cv1", channel_shuffle[1].output[0])
+    bn1, bn1_nodes, bn1_weights = make_BatchNorm2d(n.bn1, name + ".bn1", cv1.output[0])
+    r1 = make_node("Relu", [bn1.output[0]], [name + ".r1"], name=name + ".r1")
+    cv2, cv2_nodes, cv2_weights = make_Conv2d(n.cv2, name + ".cv2", r1.output[0])
+    bn2, bn2_nodes, bn2_weights = make_BatchNorm2d(n.bn2, name + ".bn2", cv2.output[0])
+    cv3, cv3_nodes, cv3_weights = make_Conv2d(n.cv3, name + ".cv3", bn2.output[0])
+    bn3, bn3_nodes, bn3_weights = make_BatchNorm2d(n.bn3, name + ".bn3", cv3.output[0])
+    r2 = make_node("Relu", [bn3.output[0]], [name + ".r2"], name=name + ".r2")
+    concat = make_node("Concat", [channel_shuffle[0].output[0], r2.output[0]], [name + ".concat"], name=name + ".concat", axis=1)
+    return concat, [*channel_shuffle_nodes, *cv1_nodes, *bn1_nodes, r1, *cv2_nodes, *bn2_nodes, *cv3_nodes, *bn3_nodes, r2, concat], [*channel_shuffle_weights, *cv1_weights, *bn1_weights, *cv2_weights, *bn2_weights, *cv3_weights, *bn3_weights]
+  elif n.stride == 2:
+    cv4, cv4_nodes, cv4_weights = make_Conv2d(n.cv4, name + ".cv4", x)
+    bn4, bn4_nodes, bn4_weights = make_BatchNorm2d(n.bn4, name + ".bn4", cv4.output[0])
+    cv5, cv5_nodes, cv5_weights = make_Conv2d(n.cv5, name + ".cv5", bn4.output[0])
+    bn5, bn5_nodes, bn5_weights = make_BatchNorm2d(n.bn5, name + ".bn5", cv5.output[0])
+    r1 = make_node("Relu", [bn5.output[0]], [name + ".r1"], name=name + ".r1")
+    cv1, cv1_nodes, cv1_weights = make_Conv2d(n.cv1, name + ".cv1", x)
+    bn1, bn1_nodes, bn1_weights = make_BatchNorm2d(n.bn1, name + ".bn1", cv1.output[0])
+    r2 = make_node("Relu", [bn1.output[0]], [name + ".r2"], name=name + ".r2")
+    cv2, cv2_nodes, cv2_weights = make_Conv2d(n.cv2, name + ".cv2", r2.output[0])
+    bn2, bn2_nodes, bn2_weights = make_BatchNorm2d(n.bn2, name + ".bn2", cv2.output[0])
+    cv3, cv3_nodes, cv3_weights = make_Conv2d(n.cv3, name + ".cv3", bn2.output[0])
+    bn3, bn3_nodes, bn3_weights = make_BatchNorm2d(n.bn3, name + ".bn3", cv3.output[0])
+    r3 = make_node("Relu", [bn3.output[0]], [name + ".r3"], name=name + ".r3")
+    concat = make_node("Concat", [r1.output[0], r3.output[0]], [name + ".concat"], name=name + ".concat", axis=1)
+    return concat, [*cv4_nodes, *bn4_nodes, *cv5_nodes, *bn5_nodes, r1, *cv1_nodes, *bn1_nodes, r2, *cv2_nodes, *bn2_nodes, *cv3_nodes, *bn3_nodes, r3, concat], [*cv4_weights, *bn4_weights, *cv5_weights, *bn5_weights, *cv1_weights, *bn1_weights, *cv2_weights, *bn2_weights, *cv3_weights, *bn3_weights]
+  raise Exception("Invalid stride", n.stride)
 
-  return l_out, [pad, *cv_nodes, *conv_emb_nodes, reshape, *color_emb_nodes, color_emb_squeeze, add, *joint_nodes, joint_lr, *fc1_nodes, fc1_lr, *l_out_nodes], [pads, *cv_weights, *conv_emb_weights, shape, *color_emb_weights, squeeze_axis, *joint_weights, *fc1_weights, *l_out_weights]
+def make_ShuffleNetV2(n: ShuffleNetV2, name: str, x: str):
+  stage1_conv, stage1_conv_nodes, stage1_conv_weights = make_Conv2d(n.stage1[0], name + ".stage1_conv", x)
+  stage1_norm, stage1_norm_nodes, stage1_norm_weights = make_BatchNorm2d(n.stage1[2], name + ".stage1_norm", stage1_conv.output[0])
+  stage1_relu = make_node("Relu", [stage1_norm.output[0]], [name + ".stage1_relu"], name=name + ".stage1_relu")
 
-def make_Model(model: Model, name: str, x: Tuple[str, str, str], color: str):
-  x2, x3, x5 = x
-  scales = numpy_helper.from_array(np.array([1.0, 1.0, 2.0, 2.0], dtype=np.float32), name + ".scales")
-  x5_upsample = make_node("Resize", [x5, scales.name], [name + ".x5_upsample"], name=name + ".x5_upsample", mode="nearest")
-  x2_avg_pool = make_node("AveragePool", [x2], [name + ".x2_avg_pool"], name=name + ".x2_avg_pool", kernel_shape=[3, 3], strides=[2, 2], pads=[1, 1, 1, 1])
-  concat = make_node("Concat", [x2_avg_pool.output[0], x3, x5_upsample.output[0]], [name + ".concat"], name=name + ".concat", axis=1)
-  head, head_nodes, head_weights = make_Head(model.head, name + ".head", concat.output[0], color)
-  return head, [x5_upsample, x2_avg_pool, concat, *head_nodes], [scales, *head_weights]
+  max_pool = make_node("MaxPool", [stage1_relu.output[0]], [name + ".max_pool"], name=name + ".max_pool", kernel_shape=[3, 3], strides=[2, 2], pads=[1, 1, 1, 1])
 
-def make_DarknetConvBlock(n: DarknetConvBlock, name: str, x: str):
-  conv, conv_nodes, conv_weights = make_Conv2d(n.conv, name + ".conv", x)
-  bn, bn_nodes, bn_weights = make_BatchNorm2d(n.bn, name + ".bn", conv.output[0])
-  sigmoid = make_node("Sigmoid", [bn.output[0]], [name + ".sigmoid"], name=name + ".sigmoid")
-  swish = make_node("Mul", [bn.output[0], sigmoid.output[0]], [name + ".swish"], name=name + ".swish")
-  return swish, [*conv_nodes, *bn_nodes, sigmoid, swish], [*conv_weights, *bn_weights]
+  stage2, stage2_nodes, stage2_weights, stage2_input = [], [], [], max_pool.output[0]
+  for i, block in enumerate(n.stage2):
+    block, block_nodes, block_weights = make_ShuffleV2Block(block, name + f".stage2_{i}", stage2_input)
+    stage2.append(block)
+    stage2_nodes.extend(block_nodes)
+    stage2_weights.extend(block_weights)
+    stage2_input = block.output[0]
 
-def make_DarknetBottleneck(n: DarknetBottleneck, name: str, x: str):
-  cv1, cv1_nodes, cv1_weights = make_DarknetConvBlock(n.cv1, name + ".cv1", x)
-  cv2, cv2_nodes, cv2_weights = make_DarknetConvBlock(n.cv2, name + ".cv2", cv1.output[0])
-  if n.residual:
-    add = make_node("Add", [x, cv2.output[0]], [name + ".add"], name=name + ".add")
-    return add, [*cv1_nodes, *cv2_nodes, add], [*cv1_weights, *cv2_weights]
-  else:
-    return cv2, [*cv1_nodes, *cv2_nodes], [*cv1_weights, *cv2_weights]
+  stage3, stage3_nodes, stage3_weights, stage3_input = [], [], [], stage2_input
+  for i, block in enumerate(n.stage3):
+    block, block_nodes, block_weights = make_ShuffleV2Block(block, name + f".stage3_{i}", stage3_input)
+    stage3.append(block)
+    stage3_nodes.extend(block_nodes)
+    stage3_weights.extend(block_weights)
+    stage3_input = block.output[0]
 
-def make_DarknetC2f(n: DarknetC2f, name: str, x: str):
-  cv1, cv1_nodes, cv1_weights = make_DarknetConvBlock(n.cv1, name + ".cv1", x)
-  chunk = make_node("Split", [cv1.output[0]], [name + ".chunk1", name + ".chunk2"], name=name + ".chunk", axis=1, num_outputs=2)
+  stage4, stage4_nodes, stage4_weights, stage4_input = [], [], [], stage3_input
+  for i, block in enumerate(n.stage4):
+    block, block_nodes, block_weights = make_ShuffleV2Block(block, name + f".stage4_{i}", stage4_input)
+    stage4.append(block)
+    stage4_nodes.extend(block_nodes)
+    stage4_weights.extend(block_weights)
+    stage4_input = block.output[0]
 
-  bottlenecks, bottleneck_nodes, bottleneck_weights, bottleneck_input = [], [], [], chunk.output[-1]
-  for i, bottleneck in enumerate(n.bottleneck):
-    bottleneck, bottleneck_nodes_, bottleneck_weights_ = make_DarknetBottleneck(bottleneck, name + f".bottleneck{i}", bottleneck_input)
-    bottlenecks.append(bottleneck)
-    bottleneck_nodes.extend(bottleneck_nodes_)
-    bottleneck_weights.extend(bottleneck_weights_)
-    bottleneck_input = bottleneck.output[0]
+  stage5_conv, stage5_conv_nodes, stage5_conv_weights = make_Conv2d(n.stage5[0], name + ".stage5_conv", stage4_input)
+  stage5_norm, stage5_norm_nodes, stage5_norm_weights = make_BatchNorm2d(n.stage5[2], name + ".stage5_norm", stage5_conv.output[0])
+  stage5_relu = make_node("Relu", [stage5_norm.output[0]], [name + ".stage5_relu"], name=name + ".stage5_relu")
+  return stage5_relu, [*stage1_conv_nodes, *stage1_norm_nodes, stage1_relu, max_pool, *stage2_nodes, *stage3_nodes, *stage4_nodes, *stage5_conv_nodes, *stage5_norm_nodes, stage5_relu], [*stage1_conv_weights, *stage1_norm_weights, *stage2_weights, *stage3_weights, *stage4_weights, *stage5_conv_weights, *stage5_norm_weights]
 
-  concat = make_node("Concat", [*chunk.output, *[b.output[0] for b in bottlenecks]], [name + ".concat"], name=name + ".concat", axis=1)
+def make_DFCAttention(n: DFCAttention, name: str, x: str):
+  downsample = make_node("AveragePool", [x], [name + ".downsample"], name=name + ".downsample", kernel_shape=[2, 2], strides=[2, 2])
+  cv, cv_nodes, cv_weights = make_Conv2d(n.cv, name + ".cv", downsample.output[0])
+  norm, norm_nodes, norm_weights = make_BatchNorm2d(n.norm, name + ".norm", cv.output[0])
+  hcv, hcv_nodes, hcv_weights = make_Conv2d(n.hcv, name + ".hcv", norm.output[0])
+  hnorm, hnorm_nodes, hnorm_weights = make_BatchNorm2d(n.hnorm, name + ".hnorm", hcv.output[0])
+  vcv, vcv_nodes, vcv_weights = make_Conv2d(n.vcv, name + ".vcv", hnorm.output[0])
+  vnorm, vnorm_nodes, vnorm_weights = make_BatchNorm2d(n.vnorm, name + ".vnorm", vcv.output[0])
+  sigmoid = make_node("Sigmoid", [vnorm.output[0]], [name + ".sigmoid"], name=name + ".sigmoid")
+  scales = numpy_helper.from_array(np.array([1.0, 1.0, 2.0, 2.0], dtype=np.float32), name + ".upsample_scales")
+  upsample = make_node("Resize", [sigmoid.output[0], "", scales.name], [name + ".upsample"], name=name + ".upsample", mode="nearest")
+  return upsample, [downsample, *cv_nodes, *norm_nodes, *hcv_nodes, *hnorm_nodes, *vcv_nodes, *vnorm_nodes, sigmoid, upsample], [*cv_weights, *norm_weights, *hcv_weights, *hnorm_weights, *vcv_weights, *vnorm_weights, scales]
 
-  cv2, cv2_nodes, cv2_weights = make_DarknetConvBlock(n.cv2, name + ".cv2", concat.output[0])
-  return cv2, [*cv1_nodes, chunk, *bottleneck_nodes, concat, *cv2_nodes], [*cv1_weights, *bottleneck_weights, *cv2_weights]
+def make_EncoderBlock(n: EncoderBlock, name: str, x: str):
+  attention, attention_nodes, attention_weights = make_DFCAttention(n.attention, name + ".attention", x)
+  mul = make_node("Mul", [x, attention.output[0]], [name + ".mul"], name=name + ".mul")
+  add1 = make_node("Add", [x, mul.output[0]], [name + ".add1"], name=name + ".add1")
+  norm1, norm1_nodes, norm1_weights = make_BatchNorm2d(n.norm1, name + ".norm1", add1.output[0])
+  cv1, cv1_nodes, cv1_weights = make_Conv2d(n.cv1, name + ".cv1", norm1.output[0])
+  nl1, nl1_nodes, nl1_weights = make_mish(name + ".nl1", cv1.output[0])
+  cv2, cv2_nodes, cv2_weights = make_Conv2d(n.cv2, name + ".cv2", nl1.output[0])
+  add2 = make_node("Add", [nl1.output[0], cv2.output[0]], [name + ".add2"], name=name + ".add2")
+  norm2, norm2_nodes, norm2_weights = make_BatchNorm2d(n.norm2, name + ".norm2", add2.output[0])
+  return norm2, [*attention_nodes, mul, add1, *norm1_nodes, *cv1_nodes, *nl1_nodes, *cv2_nodes, add2, *norm2_nodes], [*attention_weights, *norm1_weights, *cv1_weights, *nl1_weights, *cv2_weights, *norm2_weights]
 
-def make_DarknetSPPF(n: DarknetSPPF, name: str, x: str):
-  cv1, cv1_nodes, cv1_weights = make_DarknetConvBlock(n.cv1, name + ".cv1", x)
+def make_EncoderDecoder(n: EncoderDecoder, name: str, x: str):
+  encoders, encoder_nodes, encoder_weights, encoder_input = [], [], [], x
+  for i, encoder in enumerate(n.encoders):
+    encoder, encoder_nodes_, encoder_weights_ = make_EncoderBlock(encoder, name + f".encoder{i}", encoder_input)
+    encoders.append(encoder)
+    encoder_nodes.extend(encoder_nodes_)
+    encoder_weights.extend(encoder_weights_)
+    encoder_input = encoder.output[0]
 
-  mp1 = make_node("MaxPool", [cv1.output[0]], [name + ".mp1"], name=name + ".mp1", kernel_shape=[n.k, n.k], strides=[1, 1], pads=[n.k // 2]*4)
-  mp2 = make_node("MaxPool", [mp1.output[0]], [name + ".mp2"], name=name + ".mp2", kernel_shape=[n.k, n.k], strides=[1, 1], pads=[n.k // 2]*4)
-  mp3 = make_node("MaxPool", [mp2.output[0]], [name + ".mp3"], name=name + ".mp3", kernel_shape=[n.k, n.k], strides=[1, 1], pads=[n.k // 2]*4)
+  cv1, cv1_nodes, cv1_weights = make_Conv2d(n.cv1, name + ".cv1", encoder_input)
+  norm1, norm1_nodes, norm1_weights = make_BatchNorm2d(n.norm1, name + ".norm1", cv1.output[0])
+  nl1, nl1_nodes, nl1_weights = make_mish(name + ".nl1", norm1.output[0])
+  cv2, cv2_nodes, cv2_weights = make_Conv2d(n.cv2, name + ".cv2", nl1.output[0])
+  norm2, norm2_nodes, norm2_weights = make_BatchNorm2d(n.norm2, name + ".norm2", cv2.output[0])
+  nl2, nl2_nodes, nl2_weights = make_mish(name + ".nl2", norm2.output[0])
+  cv_out, cv_out_nodes, cv_out_weights = make_Conv2d(n.cv_out, name + ".cv_out", nl2.output[0])
+  avg_pool = make_node("AveragePool", [cv_out.output[0]], [name + ".avg_pool"], name=name + ".avg_pool", kernel_shape=[2, 2], strides=[2, 2])
+  output_shape = numpy_helper.from_array(np.array([1, n.dim], dtype=np.int64), name + ".output_shape")
+  reshape = make_node("Reshape", [avg_pool.output[0], output_shape.name], [name + ".reshape"], name=name + ".reshape")
+  return reshape, [*encoder_nodes, *cv1_nodes, *norm1_nodes, *nl1_nodes, *cv2_nodes, *norm2_nodes, *nl2_nodes, *cv_out_nodes, avg_pool, reshape], [*encoder_weights, *cv1_weights, *norm1_weights, *nl1_weights, *cv2_weights, *norm2_weights, *nl2_weights, *cv_out_weights, output_shape]
 
-  concat = make_node("Concat", [cv1.output[0], mp1.output[0], mp2.output[0], mp3.output[0]], [name + ".concat"], name=name + ".concat", axis=1)
+def make_ObjHead(n: ObjHead, name: str, x: str):
+  l1, l1_nodes, l1_weights = make_Linear(n.l1, name + ".l1", x)
+  sigmoid = make_node("Sigmoid", [l1.output[0]], [name + ".sigmoid"], name=name + ".sigmoid")
+  output_shape = numpy_helper.from_array(np.array([1, n.l1.weight.shape[0] // 2, 1], dtype=np.int64), name + ".output_shape")
+  reshape = make_node("Reshape", [sigmoid.output[0], output_shape.name], [name + ".reshape"], name=name + ".reshape")
+  return reshape, [*l1_nodes, sigmoid, reshape], [*l1_weights, output_shape]
 
-  cv2, cv2_nodes, cv2_weights = make_DarknetConvBlock(n.cv2, name + ".cv2", concat.output[0])
-  return cv2, [*cv1_nodes, mp1, mp2, mp3, concat, *cv2_nodes], [*cv1_weights, *cv2_weights]
+def make_PosHead(n: PosHead, name: str, x: str):
+  l1, l1_nodes, l1_weights = make_Linear(n.l1, name + ".l1", x)
+  nl1, nl1_nodes, nl1_weights = make_mish(name + ".nl1", l1.output[0])
+  l2, l2_nodes, l2_weights = make_Linear(n.l2, name + ".l2", nl1.output[0])
+  nl2, nl2_nodes, nl2_weights = make_mish(name + ".nl2", l2.output[0])
+  l3, l3_nodes, l3_weights = make_Linear(n.l3, name + ".l3", nl2.output[0])
+  sigmoid = make_node("Sigmoid", [l3.output[0]], [name + ".sigmoid"], name=name + ".sigmoid")
+  output_shape = numpy_helper.from_array(np.array([1, n.l3.weight.shape[0] // 2, 2], dtype=np.int64), name + ".output_shape")
+  reshape = make_node("Reshape", [sigmoid.output[0], output_shape.name], [name + ".reshape"], name=name + ".reshape")
+  return reshape, [*l1_nodes, *nl1_nodes, *l2_nodes, *nl2_nodes, *l3_nodes, sigmoid, reshape], [*l1_weights, *nl1_weights, *l2_weights, *nl2_weights, *l3_weights, output_shape]
 
-def make_Darknet(net: Darknet, name: str, x: str):
-  b1_0, b1_0_nodes, b1_0_weights = make_DarknetConvBlock(net.b1[0], name + ".b1_0", x)
-  b1_1, b1_1_nodes, b1_1_weights = make_DarknetConvBlock(net.b1[1], name + ".b1_1", b1_0.output[0])
-
-  b2_0, b2_0_nodes, b2_0_weights = make_DarknetC2f(net.b2[0], name + ".b2_0", b1_1.output[0])
-  b2_1, b2_1_nodes, b2_1_weights = make_DarknetConvBlock(net.b2[1], name + ".b2_1", b2_0.output[0])
-  b2_2, b2_2_nodes, b2_2_weights = make_DarknetC2f(net.b2[2], name + ".b2_2", b2_1.output[0])
-
-  b3_0, b3_0_nodes, b3_0_weights = make_DarknetConvBlock(net.b3[0], name + ".b3_0", b2_2.output[0])
-  b3_1, b3_1_nodes, b3_1_weights = make_DarknetC2f(net.b3[1], name + ".b3_1", b3_0.output[0])
-
-  b4_0, b4_0_nodes, b4_0_weights = make_DarknetConvBlock(net.b4[0], name + ".b4_0", b3_1.output[0])
-  b4_1, b4_1_nodes, b4_1_weights = make_DarknetC2f(net.b4[1], name + ".b4_1", b4_0.output[0])
-
-  b5_0, b5_0_nodes, b5_0_weights = make_DarknetSPPF(net.b5[0], name + ".b5_0", b4_1.output[0])
-
-  return (b2_2, b3_1, b5_0), [*b1_0_nodes, *b1_1_nodes, *b2_0_nodes, *b2_1_nodes, *b2_2_nodes, *b3_0_nodes, *b3_1_nodes, *b4_0_nodes, *b4_1_nodes, *b5_0_nodes], [*b1_0_weights, *b1_1_weights, *b2_0_weights, *b2_1_weights, *b2_2_weights, *b3_0_weights, *b3_1_weights, *b4_0_weights, *b4_1_weights, *b5_0_weights]
+def make_Model(model: Model, name: str, x: str):
+  backbone, backbone_nodes, backbone_weights = make_ShuffleNetV2(model.backbone, name + ".backbone", x)
+  input_conv, input_conv_nodes, input_conv_weights = make_Conv2d(model.input_conv, name + ".input_conv", backbone.output[0])
+  encdec, encdec_nodes, encdec_weights = make_EncoderDecoder(model.encdec, name + ".encdec", input_conv.output[0])
+  obj_head, obj_head_nodes, obj_head_weights = make_ObjHead(model.obj_head, name + ".obj_head", encdec.output[0])
+  pos_head, pos_head_nodes, pos_head_weights = make_PosHead(model.pos_head, name + ".pos_head", encdec.output[0])
+  return (obj_head, pos_head), [*backbone_nodes, *input_conv_nodes, *encdec_nodes, *obj_head_nodes, *pos_head_nodes], [*backbone_weights, *input_conv_weights, *encdec_weights, *obj_head_weights, *pos_head_weights]
 
 def make_preprocess(name: str, x: str):
-  div_const = numpy_helper.from_array(np.array([255], dtype=np.float32), name + ".div_const")
+  div_const = numpy_helper.from_array(np.array([255], dtype=np.float16), name + ".div_const")
   div = make_node("Div", [x, div_const.name], [name + ".div"], name=name + ".div")
   permute = make_node("Transpose", [div.output[0]], [name + ".permute"], name=name + ".permute", perm=[0, 3, 1, 2])
   return permute, [div, permute], [div_const]
 
 if __name__ == "__main__":
-  foundation = get_foundation()
   model = Model()
-  # load_state_dict(model, safe_load(str(BASE_PATH / "model.safetensors")))
+  load_state_dict(model, safe_load(str(BASE_PATH / "model.safetensors")))
+  for key, param in get_state_dict(model).items():
+    if "bn" in key: continue
+    param.assign(param.half()).realize()
 
-  print(f"there are {sum(param.numel() for param in get_parameters(model)) / 1e6}M params")
+  print(f"there are {sum(param.numel() for param in get_parameters(model)) / 1e6}M params") # type: ignore
 
-  x = make_tensor_value_info("x", TensorProto.FLOAT, [1, 480, 640, 3])
-  color = make_tensor_value_info("color", TensorProto.INT32, [1, 1])
-  out = make_tensor_value_info("out", TensorProto.FLOAT, [1, 4])
+  x = make_tensor_value_info("x", TensorProto.FLOAT16, [1, 320, 320, 3])
+  x_obj = make_tensor_value_info("x_obj", TensorProto.FLOAT16, [1, 1, 1])
+  x_pos = make_tensor_value_info("x_pos", TensorProto.FLOAT16, [1, 1, 2])
 
   preprocess_node, preprocess_nodes, preprocess_weights = make_preprocess("preprocess", x.name)
-  foundation_node, foundation_nodes, foundation_weights = make_Darknet(foundation.net, "foundation", preprocess_node.output[0])
-  model_node, model_nodes, model_weights = make_Model(model, "model", (foundation_node[0].output[0], foundation_node[1].output[0], foundation_node[2].output[0]), color.name)
-  model_node.output[0] = out.name
+  model_node, model_nodes, model_weights = make_Model(model, "model", preprocess_node.output[0])
+  model_node[0].output[0] = x_obj.name
+  model_node[1].output[0] = x_pos.name
 
-  graph = make_graph([*preprocess_nodes, *foundation_nodes, *model_nodes], "model", [x, color], [out], [*preprocess_weights, *foundation_weights, *model_weights])
+  graph = make_graph([*preprocess_nodes, *model_nodes], "model", [x], [x_obj, x_pos], [*preprocess_weights, *model_weights])
   model = make_model(graph)
-  check_model(model)
+  del model.opset_import[:]
+  opset = model.opset_import.add()
+  opset.domain = ""
+  opset.version = 18
+  model = shape_inference.infer_shapes(model)
+  model = convert_version(model, 18)
+  check_model(model, True)
   onnx.save(model, "model.onnx")
-
-  model_fp16 = float16.convert_float_to_float16(model)
-  onnx.save(model_fp16, "model_fp16.onnx")
