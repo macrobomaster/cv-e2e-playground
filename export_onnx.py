@@ -31,9 +31,9 @@ def make_BatchNorm2d(n: BatchNorm2d, name: str, x: str):
   bias = numpy_helper.from_array(n.bias.numpy(), name + ".bias")
   mean = numpy_helper.from_array(n.running_mean.numpy(), name + ".mean")
   var = numpy_helper.from_array(n.running_var.numpy(), name + ".var")
-  cast1 = make_node("Cast", [x], [name + ".cast1"], name=name + ".cast", to=TensorProto.FLOAT)
+  cast1 = make_node("Cast", [x], [name + ".cast1"], name=name + ".cast1", to=TensorProto.FLOAT)
   bn = make_node("BatchNormalization", [cast1.output[0], weight.name, bias.name, mean.name, var.name], [name], name=name, epsilon=n.eps)
-  cast2 = make_node("Cast", [bn.output[0]], [name + ".cast2"], name=name + ".cast", to=TensorProto.FLOAT16)
+  cast2 = make_node("Cast", [bn.output[0]], [name + ".cast2"], name=name + ".cast2", to=TensorProto.FLOAT16)
   return cast2, [cast1, bn, cast2], [weight, bias, mean, var]
 
 def make_Linear(n: Linear, name: str, x: str):
