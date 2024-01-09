@@ -12,7 +12,7 @@ def channel_shuffle(x: Tensor) -> Tuple[Tensor, Tensor]:
 class ShuffleV2Block:
   def __init__(self, inp: int, outp: int, c_mid: int, kernel_size: int, stride: int):
     assert stride in [1, 2]
-    self.stride, self.inp, self.c_mid = stride, inp, c_mid
+    self.stride, self.inp, self.outp, self.c_mid = stride, inp, outp, c_mid
     pad, out = kernel_size // 2, outp - inp
 
     # pw
@@ -36,18 +36,14 @@ class ShuffleV2Block:
   def __call__(self, x: Tensor) -> Tensor:
     if self.stride == 1:
       x_proj, x = channel_shuffle(x)
-      x = self.bn1(self.cv1(x).float()).cast(dtypes.default_float).relu()
-      x = self.bn2(self.cv2(x).float()).cast(dtypes.default_float)
-      x = self.bn3(self.cv3(x).float()).cast(dtypes.default_float).relu()
-      return x_proj.cat(x, dim=1)
     elif self.stride == 2:
       x_proj = self.bn4(self.cv4(x).float()).cast(dtypes.default_float)
       x_proj = self.bn5(self.cv5(x_proj).float()).cast(dtypes.default_float).relu()
-      x = self.bn1(self.cv1(x).float()).cast(dtypes.default_float).relu()
-      x = self.bn2(self.cv2(x).float()).cast(dtypes.default_float)
-      x = self.bn3(self.cv3(x).float()).cast(dtypes.default_float).relu()
-      return x_proj.cat(x, dim=1)
-    raise Exception("Invalid stride", self.stride)
+    else: raise Exception("Invalid stride", self.stride)
+    x = self.bn1(self.cv1(x).float()).cast(dtypes.default_float).relu()
+    x = self.bn2(self.cv2(x).float()).cast(dtypes.default_float)
+    x = self.bn3(self.cv3(x).float()).cast(dtypes.default_float).relu()
+    return x_proj.cat(x, dim=1)
 
 class ShuffleNetV2:
   def __init__(self):
