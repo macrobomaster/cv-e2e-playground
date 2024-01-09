@@ -45,11 +45,15 @@ class EncoderBlock:
 
   def __call__(self, x: Tensor):
     x = x + x * self.attention(x)
-    x = self.cv1(self.norm1(x.float()).cast(dtypes.default_float)).gelu()
-    return self.norm2((x + self.cv2(x)).float()).cast(dtypes.default_float)
+    x = self.norm1(x.float()).cast(dtypes.default_float)
+    x = self.cv1(x).mish()
+    x = x + self.cv2(x)
+    return self.norm2(x.float()).cast(dtypes.default_float)
 
 class EncoderDecoder:
   def __init__(self, dim):
+    self.dim = dim
+
     self.encoders = [EncoderBlock(dim) for _ in range(2)]
 
     self.cv1 = Conv2d(dim, dim, kernel_size=5, bias=False)
@@ -60,8 +64,8 @@ class EncoderDecoder:
 
   def __call__(self, x: Tensor):
     x = x.sequential(self.encoders)
-    x = self.cv1(self.norm1(x.float()).cast(dtypes.default_float)).gelu()
-    x = self.cv2(self.norm2(x.float()).cast(dtypes.default_float)).gelu()
+    x = self.norm1(self.cv1(x).float()).cast(dtypes.default_float).mish()
+    x = self.norm2(self.cv2(x).float()).cast(dtypes.default_float).mish()
     x = self.cv_out(x).avg_pool2d(2)
     x = x.reshape(x.shape[0], -1)
     return x
@@ -80,8 +84,8 @@ class PosHead:
     self.l3 = Linear(dim, num_outputs * 2)
 
   def __call__(self, x: Tensor):
-    x = self.l1(x).gelu()
-    x = self.l2(x).gelu()
+    x = self.l1(x).mish()
+    x = self.l2(x).mish()
     return self.l3(x).sigmoid().reshape(x.shape[0], -1, 2)
 
 class Model:
