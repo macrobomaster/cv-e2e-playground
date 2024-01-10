@@ -27,7 +27,6 @@ def make_Conv2d(n: Conv2d, name: str, x: str):
 def make_BatchNorm2d(n: BatchNorm2d, name: str, x: str):
   assert n.weight is not None and n.bias is not None
   weight = numpy_helper.from_array(n.weight.numpy(), name + ".weight")
-  print(n.weight.dtype)
   bias = numpy_helper.from_array(n.bias.numpy(), name + ".bias")
   mean = numpy_helper.from_array(n.running_mean.numpy(), name + ".mean")
   var = numpy_helper.from_array(n.running_var.numpy(), name + ".var")
@@ -213,7 +212,7 @@ def make_preprocess(name: str, x: str):
 
 if __name__ == "__main__":
   model = Model()
-  # load_state_dict(model, safe_load(str(BASE_PATH / "model.safetensors")))
+  load_state_dict(model, safe_load(str(BASE_PATH / "model.safetensors")))
   for key, param in get_state_dict(model).items():
     if "norm" in key: continue
     if "bn" in key: continue
