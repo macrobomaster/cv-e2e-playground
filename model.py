@@ -44,17 +44,17 @@ class EncoderBlock:
     self.cv2 = Conv2d(dim, dim, kernel_size=3, padding=1, groups=dim, bias=False)
 
   def __call__(self, x: Tensor):
-    x = x + x * self.attention(x)
+    x = x + x * (att := self.attention(x))
     x = self.norm1(x.float()).cast(dtypes.default_float)
     x = self.cv1(x).mish()
     x = x + self.cv2(x)
-    return self.norm2(x.float()).cast(dtypes.default_float)
+    return self.norm2(x.float()).cast(dtypes.default_float), att
 
 class EncoderDecoder:
   def __init__(self, dim):
     self.dim = dim
 
-    self.encoders = [EncoderBlock(dim) for _ in range(2)]
+    self.encoders = [EncoderBlock(dim) for _ in range(6)]
 
     self.cv1 = Conv2d(dim, dim, kernel_size=5, bias=False)
     self.norm1 = BatchNorm2d(dim)
@@ -63,12 +63,12 @@ class EncoderDecoder:
     self.cv_out = Conv2d(dim, dim, kernel_size=1, bias=False)
 
   def __call__(self, x: Tensor):
-    x = x.sequential(self.encoders)
+    for encoder in self.encoders: x, att = encoder(x)
     x = self.norm1(self.cv1(x).float()).cast(dtypes.default_float).mish()
     x = self.norm2(self.cv2(x).float()).cast(dtypes.default_float).mish()
     x = self.cv_out(x).avg_pool2d(2)
     x = x.reshape(x.shape[0], -1)
-    return x
+    return x, att
 
 class ObjHead:
   def __init__(self, dim, num_outputs):
@@ -106,11 +106,11 @@ class Model:
 
     x = self.backbone(img)
     x = self.input_conv(x)
-    x = self.encdec(x)
+    x, att = self.encdec(x)
 
     x_obj = self.obj_head(x)
     x_pos = self.pos_head(x)
 
     # cast to correct output type
     if not Tensor.training: x_obj, x_pos = x_obj.cast(dtypes.default_float), x_pos.cast(dtypes.default_float)
-    return x_obj, x_pos
+    return (x_obj, x_pos) if Tensor.training else (x_obj, x_pos, att)
