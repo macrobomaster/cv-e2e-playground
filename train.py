@@ -17,7 +17,7 @@ BS = 16
 WARMUP_STEPS = 1000
 START_LR = 0.001
 END_LR = 0.0005
-STEPS = 10001
+STEPS = 200001
 
 def loss_fn(pred: tuple[Tensor, Tensor], y: Tensor):
   obj_loss = pred[0][:, 0, 0].binary_crossentropy_logits(y[:, 0])
@@ -90,12 +90,11 @@ if __name__ == "__main__":
 
   model = Model()
 
-  # sn_state_dict = safe_load("./weights/shufflenetv2.safetensors")
-  # load_state_dict(model.backbone, sn_state_dict)
-  # for param in get_state_dict(model.backbone).values(): param.assign(param.half()).realize()
+  sn_state_dict = safe_load("./weights/shufflenetv2.safetensors")
+  load_state_dict(model.backbone, sn_state_dict)
 
-  state_dict = safe_load(str(BASE_PATH / "model.safetensors"))
-  load_state_dict(model, state_dict)
+  # state_dict = safe_load(str(BASE_PATH / "model.safetensors"))
+  # load_state_dict(model, state_dict)
 
   parameters_backbone, parameters = [], []
   for key, value in get_state_dict(model).items():
