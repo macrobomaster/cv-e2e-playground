@@ -40,34 +40,56 @@ class EncoderBlock:
     self.attention = DFCAttention(dim)
     self.norm1 = BatchNorm2d(dim)
     self.cv1 = Conv2d(dim, dim, kernel_size=1, bias=False)
+    self.cv2 = Conv2d(dim, dim, kernel_size=5, padding=2, groups=dim, bias=False)
     self.norm2 = BatchNorm2d(dim)
-    self.cv2 = Conv2d(dim, dim, kernel_size=3, padding=1, groups=dim, bias=False)
 
   def __call__(self, x: Tensor):
-    x = x + x * (att := self.attention(x))
+    # attention
+    xx = x * (att := self.attention(x))
+    x = x + xx
     x = self.norm1(x.float()).cast(dtypes.default_float)
-    x = self.cv1(x).mish()
-    x = x + self.cv2(x)
+    # feedforward
+    xx = self.cv1(x).mish()
+    xx = self.cv2(xx)
+    x = x + xx
     return self.norm2(x.float()).cast(dtypes.default_float), att
 
-class EncoderDecoder:
+class SEBlock:
+  def __init__(self, dim):
+    self.cv1 = Conv2d(dim, dim//16, kernel_size=1, bias=False)
+    self.cv2 = Conv2d(dim//16, dim, kernel_size=1, bias=False)
+
+  def __call__(self, x: Tensor):
+    xx = x.avg_pool2d(x.shape[-1])
+    xx = self.cv1(xx).relu()
+    xx = self.cv2(xx).sigmoid()
+    return x * xx
+
+class CompressBlock:
+  def __init__(self, dim):
+    self.pw = Conv2d(dim, dim, kernel_size=1, bias=False)
+    self.norm1 = BatchNorm2d(dim)
+    self.dw = Conv2d(dim, dim, kernel_size=5, stride=2, padding=1, groups=dim, bias=False)
+    self.norm2 = BatchNorm2d(dim)
+  def __call__(self, x: Tensor):
+    x = self.norm1(self.pw(x).float()).cast(dtypes.default_float).mish()
+    x = self.norm2(self.dw(x).float()).cast(dtypes.default_float).mish()
+    return x
+
+class Encoder:
   def __init__(self, dim):
     self.dim = dim
 
-    self.encoders = [EncoderBlock(dim) for _ in range(6)]
-
-    self.cv1 = Conv2d(dim, dim, kernel_size=5, bias=False)
-    self.norm1 = BatchNorm2d(dim)
-    self.cv2 = Conv2d(dim, dim, kernel_size=5, bias=False)
-    self.norm2 = BatchNorm2d(dim)
-    self.cv_out = Conv2d(dim, dim, kernel_size=1, bias=False)
+    self.encoders = [EncoderBlock(dim) for _ in range(2)]
+    self.se = SEBlock(dim)
+    self.compress = CompressBlock(dim)
+    self.cv_out = Conv2d(dim, 32, kernel_size=1, bias=False)
 
   def __call__(self, x: Tensor):
     for encoder in self.encoders: x, att = encoder(x)
-    x = self.norm1(self.cv1(x).float()).cast(dtypes.default_float).mish()
-    x = self.norm2(self.cv2(x).float()).cast(dtypes.default_float).mish()
-    x = self.cv_out(x).avg_pool2d(2)
-    x = x.reshape(x.shape[0], -1)
+    x = self.se(x).mish()
+    x = self.compress(x)
+    x = self.cv_out(x).flatten(1)
     return x, att
 
 class ObjHead:
@@ -93,7 +115,7 @@ class Model:
     self.backbone = ShuffleNetV2()
 
     self.input_conv = Conv2d(1024, 512, kernel_size=1, bias=False)
-    self.encdec = EncoderDecoder(512)
+    self.enc = Encoder(512)
 
     self.obj_head = ObjHead(512, 1)
     self.pos_head = PosHead(512, 1)
@@ -104,13 +126,21 @@ class Model:
     else: img = img.cast(dtypes.default_float)
     img = img.permute(0, 3, 1, 2) / 255
 
+    # backbone
     x = self.backbone(img)
-    x = self.input_conv(x)
-    x, att = self.encdec(x)
 
+    # encoder-decoder
+    x = self.input_conv(x)
+    x, att = self.enc(x)
+
+    # heads
     x_obj = self.obj_head(x)
     x_pos = self.pos_head(x)
 
     # cast to correct output type
     if not Tensor.training: x_obj, x_pos = x_obj.cast(dtypes.default_float), x_pos.cast(dtypes.default_float)
     return (x_obj, x_pos) if Tensor.training else (x_obj, x_pos, att)
+
+if __name__ == "__main__":
+  from tinygrad.nn.state import get_parameters
+  print("model params:", sum(x.numel() for x in get_parameters(Model())) / 1e6)

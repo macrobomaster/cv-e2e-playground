@@ -2,16 +2,16 @@ from typing import Tuple
 
 from tinygrad.nn.state import get_parameters, load_state_dict, safe_load, get_state_dict
 from tinygrad.nn import Conv2d, Linear, BatchNorm2d
+from tinygrad.helpers import getenv
 import onnx
 from onnx import numpy_helper, shape_inference
 from onnx.onnx_pb import TensorProto
 from onnx.helper import make_graph, make_model, make_node, make_tensor_value_info
 from onnx.checker import check_model
-from onnx.version_converter import convert_version
 import numpy as np
 
 from main import BASE_PATH
-from model import Model, ObjHead, PosHead, DFCAttention, EncoderBlock, EncoderDecoder
+from model import CompressBlock, Model, ObjHead, PosHead, DFCAttention, EncoderBlock, Encoder, SEBlock
 from shufflenet import ShuffleNetV2, ShuffleV2Block
 
 def make_Conv2d(n: Conv2d, name: str, x: str):
@@ -21,7 +21,7 @@ def make_Conv2d(n: Conv2d, name: str, x: str):
     conv = make_node("Conv", [x, weight.name, bias.name], [name], name=name, pads=[n.padding]*4, kernel_shape=n.kernel_size, group=n.groups, strides=[n.stride]*2 if isinstance(n.stride, int) else n.stride)
     return conv, [conv], [weight, bias]
   else:
-    conv = make_node("Conv", [x, weight.name], [name], name=name, pads=[n.padding]*4 if isinstance(n.padding, int) else [p for p in n.padding for _ in range(2)][::-1], kernel_shape=n.kernel_size, group=n.groups, strides=[n.stride]*2 if isinstance(n.stride, int) else n.stride) # type: ignore
+    conv = make_node("Conv", [x, weight.name], [name], name=name, pads=[n.padding]*4 if isinstance(n.padding, int) else [p for _ in range(2) for p in n.padding], kernel_shape=n.kernel_size, group=n.groups, strides=[n.stride]*2 if isinstance(n.stride, int) else n.stride) # type: ignore
     return conv, [conv], [weight]
 
 def make_BatchNorm2d(n: BatchNorm2d, name: str, x: str):
@@ -30,10 +30,14 @@ def make_BatchNorm2d(n: BatchNorm2d, name: str, x: str):
   bias = numpy_helper.from_array(n.bias.numpy(), name + ".bias")
   mean = numpy_helper.from_array(n.running_mean.numpy(), name + ".mean")
   var = numpy_helper.from_array(n.running_var.numpy(), name + ".var")
-  cast1 = make_node("Cast", [x], [name + ".cast1"], name=name + ".cast1", to=TensorProto.FLOAT)
-  bn = make_node("BatchNormalization", [cast1.output[0], weight.name, bias.name, mean.name, var.name], [name], name=name, epsilon=n.eps)
-  cast2 = make_node("Cast", [bn.output[0]], [name + ".cast2"], name=name + ".cast2", to=TensorProto.FLOAT16)
-  return cast2, [cast1, bn, cast2], [weight, bias, mean, var]
+  if getenv("HALFBN") == 0:
+    cast1 = make_node("Cast", [x], [name + ".cast1"], name=name + ".cast1", to=TensorProto.FLOAT)
+    bn = make_node("BatchNormalization", [cast1.output[0], weight.name, bias.name, mean.name, var.name], [name], name=name, epsilon=n.eps)
+    cast2 = make_node("Cast", [bn.output[0]], [name + ".cast2"], name=name + ".cast2", to=TensorProto.FLOAT16)
+    return cast2, [cast1, bn, cast2], [weight, bias, mean, var]
+  else:
+    bn = make_node("BatchNormalization", [x, weight.name, bias.name, mean.name, var.name], [name], name=name, epsilon=n.eps)
+    return bn, [bn], [weight, bias, mean, var]
 
 def make_Linear(n: Linear, name: str, x: str):
   weight = numpy_helper.from_array(n.weight.numpy().T, name + ".weight")
@@ -130,6 +134,7 @@ def make_ShuffleNetV2(n: ShuffleNetV2, name: str, x: str):
   stage5_conv, stage5_conv_nodes, stage5_conv_weights = make_Conv2d(n.stage5[0], name + ".stage5_conv", stage4_input)
   stage5_norm, stage5_norm_nodes, stage5_norm_weights = make_BatchNorm2d(n.stage5[2], name + ".stage5_norm", stage5_conv.output[0])
   stage5_relu = make_node("Relu", [stage5_norm.output[0]], [name + ".stage5_relu"], name=name + ".stage5_relu")
+
   return stage5_relu, [*stage1_conv_nodes, *stage1_norm_nodes, stage1_relu, max_pool, *stage2_nodes, *stage3_nodes, *stage4_nodes, *stage5_conv_nodes, *stage5_norm_nodes, stage5_relu], [*stage1_conv_weights, *stage1_norm_weights, *stage2_weights, *stage3_weights, *stage4_weights, *stage5_conv_weights, *stage5_norm_weights]
 
 def make_DFCAttention(n: DFCAttention, name: str, x: str):
@@ -153,11 +158,26 @@ def make_EncoderBlock(n: EncoderBlock, name: str, x: str):
   cv1, cv1_nodes, cv1_weights = make_Conv2d(n.cv1, name + ".cv1", norm1.output[0])
   nl1, nl1_nodes, nl1_weights = make_mish(name + ".nl1", cv1.output[0])
   cv2, cv2_nodes, cv2_weights = make_Conv2d(n.cv2, name + ".cv2", nl1.output[0])
-  add2 = make_node("Add", [nl1.output[0], cv2.output[0]], [name + ".add2"], name=name + ".add2")
+  add2 = make_node("Add", [norm1.output[0], cv2.output[0]], [name + ".add2"], name=name + ".add2")
   norm2, norm2_nodes, norm2_weights = make_BatchNorm2d(n.norm2, name + ".norm2", add2.output[0])
   return norm2, [*attention_nodes, mul, add1, *norm1_nodes, *cv1_nodes, *nl1_nodes, *cv2_nodes, add2, *norm2_nodes], [*attention_weights, *norm1_weights, *cv1_weights, *nl1_weights, *cv2_weights, *norm2_weights]
 
-def make_EncoderDecoder(n: EncoderDecoder, name: str, x: str):
+def make_SEBlock(n: SEBlock, name: str, x: str):
+  cv1, cv1_nodes, cv1_weights = make_Conv2d(n.cv1, name + ".cv1", x)
+  relu = make_node("Relu", [cv1.output[0]], [name + ".relu"], name=name + ".relu")
+  cv2, cv2_nodes, cv2_weights = make_Conv2d(n.cv2, name + ".cv2", relu.output[0])
+  sigmoid = make_node("Sigmoid", [cv2.output[0]], [name + ".sigmoid"], name=name + ".sigmoid")
+  mul = make_node("Mul", [x, sigmoid.output[0]], [name], name=name)
+  return mul, [*cv1_nodes, relu, *cv2_nodes, sigmoid, mul], [*cv1_weights, *cv2_weights]
+
+def make_CompressBlock(n: CompressBlock, name: str, x: str):
+  pw, pw_nodes, pw_weights = make_Conv2d(n.pw, name + ".pw", x)
+  norm1, norm1_nodes, norm1_weights = make_BatchNorm2d(n.norm1, name + ".norm1", pw.output[0])
+  dw, dw_nodes, dw_weights = make_Conv2d(n.dw, name + ".dw", norm1.output[0])
+  norm2, norm2_nodes, norm2_weights = make_BatchNorm2d(n.norm2, name + ".norm2", dw.output[0])
+  return norm2, [*pw_nodes, *norm1_nodes, *dw_nodes, *norm2_nodes], [*pw_weights, *norm1_weights, *dw_weights, *norm2_weights]
+
+def make_Encoder(n: Encoder, name: str, x: str):
   encoders, encoder_nodes, encoder_weights, encoder_input = [], [], [], x
   for i, encoder in enumerate(n.encoders):
     encoder, encoder_nodes_, encoder_weights_ = make_EncoderBlock(encoder, name + f".encoder{i}", encoder_input)
@@ -166,17 +186,12 @@ def make_EncoderDecoder(n: EncoderDecoder, name: str, x: str):
     encoder_weights.extend(encoder_weights_)
     encoder_input = encoder.output[0]
 
-  cv1, cv1_nodes, cv1_weights = make_Conv2d(n.cv1, name + ".cv1", encoder_input)
-  norm1, norm1_nodes, norm1_weights = make_BatchNorm2d(n.norm1, name + ".norm1", cv1.output[0])
-  nl1, nl1_nodes, nl1_weights = make_mish(name + ".nl1", norm1.output[0])
-  cv2, cv2_nodes, cv2_weights = make_Conv2d(n.cv2, name + ".cv2", nl1.output[0])
-  norm2, norm2_nodes, norm2_weights = make_BatchNorm2d(n.norm2, name + ".norm2", cv2.output[0])
-  nl2, nl2_nodes, nl2_weights = make_mish(name + ".nl2", norm2.output[0])
-  cv_out, cv_out_nodes, cv_out_weights = make_Conv2d(n.cv_out, name + ".cv_out", nl2.output[0])
-  avg_pool = make_node("AveragePool", [cv_out.output[0]], [name + ".avg_pool"], name=name + ".avg_pool", kernel_shape=[2, 2], strides=[2, 2])
-  output_shape = numpy_helper.from_array(np.array([1, n.dim], dtype=np.int64), name + ".output_shape")
-  reshape = make_node("Reshape", [avg_pool.output[0], output_shape.name], [name + ".reshape"], name=name + ".reshape")
-  return reshape, [*encoder_nodes, *cv1_nodes, *norm1_nodes, *nl1_nodes, *cv2_nodes, *norm2_nodes, *nl2_nodes, *cv_out_nodes, avg_pool, reshape], [*encoder_weights, *cv1_weights, *norm1_weights, *nl1_weights, *cv2_weights, *norm2_weights, *nl2_weights, *cv_out_weights, output_shape]
+  se, se_nodes, se_weights = make_SEBlock(n.se, name + ".se", encoder_input)
+  compress, compress_nodes, compress_weights = make_CompressBlock(n.compress, name + ".compress", se.output[0])
+  cv_out, cv_out_nodes, cv_out_weights = make_Conv2d(n.cv_out, name + ".cv_out", compress.output[0])
+  flatten = make_node("Flatten", [cv_out.output[0]], [name + ".flatten"], name=name + ".flatten", axis=1)
+
+  return flatten, [*encoder_nodes, *se_nodes, *compress_nodes, *cv_out_nodes, flatten], [*encoder_weights, *se_weights, *compress_weights, *cv_out_weights]
 
 def make_ObjHead(n: ObjHead, name: str, x: str):
   l1, l1_nodes, l1_weights = make_Linear(n.l1, name + ".l1", x)
@@ -198,10 +213,13 @@ def make_PosHead(n: PosHead, name: str, x: str):
 
 def make_Model(model: Model, name: str, x: str):
   backbone, backbone_nodes, backbone_weights = make_ShuffleNetV2(model.backbone, name + ".backbone", x)
+
   input_conv, input_conv_nodes, input_conv_weights = make_Conv2d(model.input_conv, name + ".input_conv", backbone.output[0])
-  encdec, encdec_nodes, encdec_weights = make_EncoderDecoder(model.encdec, name + ".encdec", input_conv.output[0])
+  encdec, encdec_nodes, encdec_weights = make_Encoder(model.enc, name + ".enc", input_conv.output[0])
+
   obj_head, obj_head_nodes, obj_head_weights = make_ObjHead(model.obj_head, name + ".obj_head", encdec.output[0])
   pos_head, pos_head_nodes, pos_head_weights = make_PosHead(model.pos_head, name + ".pos_head", encdec.output[0])
+
   return (obj_head, pos_head), [*backbone_nodes, *input_conv_nodes, *encdec_nodes, *obj_head_nodes, *pos_head_nodes], [*backbone_weights, *input_conv_weights, *encdec_weights, *obj_head_weights, *pos_head_weights]
 
 def make_preprocess(name: str, x: str):
@@ -214,13 +232,15 @@ if __name__ == "__main__":
   model = Model()
   load_state_dict(model, safe_load(str(BASE_PATH / "model.safetensors")))
   for key, param in get_state_dict(model).items():
-    if "norm" in key: continue
-    if "bn" in key: continue
-    if "stage1.2" in key: continue
-    if "stage5.2" in key: continue
+    if getenv("HALFBN") == 0:
+      if "norm" in key: continue
+      if "bn" in key: continue
+      if "stage1.2" in key: continue
+      if "stage5.2" in key: continue
     param.assign(param.half()).realize()
 
   print(f"there are {sum(param.numel() for param in get_parameters(model)) / 1e6}M params") # type: ignore
+  print(f"{sum(param.numel() for param in get_parameters(model.backbone)) / 1e6}M params are from the backbone") # type: ignore
 
   x = make_tensor_value_info("x", TensorProto.FLOAT16, [1, 320, 320, 3])
   x_obj = make_tensor_value_info("x_obj", TensorProto.FLOAT16, [1, 1, 1])
