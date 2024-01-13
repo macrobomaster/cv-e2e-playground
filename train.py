@@ -14,15 +14,15 @@ from model import Model
 from main import BASE_PATH
 
 BS = 16
-WARMUP_STEPS = 1000
-START_LR = 0.001
-END_LR = 0.0005
-STEPS = 200001
+WARMUP_STEPS = 200
+START_LR = 0.003
+END_LR = 0.001
+STEPS = 5000
 
 def loss_fn(pred: tuple[Tensor, Tensor], y: Tensor):
   obj_loss = pred[0][:, 0, 0].binary_crossentropy_logits(y[:, 0])
-  x_loss = (pred[1][:, 0, 0] - y[:, 1]).pow(2).mean()
-  y_loss = (pred[1][:, 0, 1] - y[:, 2]).pow(2).mean()
+  x_loss = (pred[1][:, 0, 0] - y[:, 1]).abs().mean()
+  y_loss = (pred[1][:, 0, 1] - y[:, 2]).abs().mean()
   return obj_loss + x_loss + y_loss
 
 @TinyJit
@@ -30,9 +30,7 @@ def train_step(x, y, lr):
   pred = model(x)
   loss = loss_fn(pred, y)
 
-  optim_backbone.lr.assign(lr/10)
   optim.lr.assign(lr+1-1)
-  optim_backbone.zero_grad()
   optim.zero_grad()
   loss.backward()
 
@@ -42,7 +40,6 @@ def train_step(x, y, lr):
     if p.grad is not None:
       grad_norm.assign(grad_norm + p.grad.detach().pow(2).sum())
 
-  optim_backbone.step()
   optim.step()
 
   return loss.realize(), grad_norm.realize()
@@ -98,11 +95,9 @@ if __name__ == "__main__":
 
   parameters_backbone, parameters = [], []
   for key, value in get_state_dict(model).items():
-    if "backbone" in key: parameters_backbone.append(value)
-    else: parameters.append(value)
-  optim_backbone = SGD(parameters_backbone, momentum=0.9, weight_decay=1e-4)
+    # if "backbone" in key: continue
+    parameters.append(value)
   optim = SGD(parameters, momentum=0.9, weight_decay=1e-4)
-  # optim_backbone = AdamW(parameters_backbone, wd=1e-4)
   # optim = AdamW(parameters, wd=1e-4)
 
   # start batch iterator in a separate process
@@ -116,7 +111,7 @@ if __name__ == "__main__":
     sys.exit(0)
   signal.signal(signal.SIGINT, sigint_handler)
 
-  with Context(BEAM=4):
+  with Context(BEAM=2):
     for step in (t := trange(STEPS)):
       GlobalCounters.reset()
       new_lr = get_lr(step)
@@ -126,16 +121,15 @@ if __name__ == "__main__":
       loss, grad_norm = train_step(x, y, Tensor([new_lr], dtype=dtypes.float32))
       x, y = bi_queue.get()
       x, y = Tensor(x, dtype=dtypes.uint8), Tensor(y, dtype=dtypes.default_float)
-      loss, grad_norm, lr_backbone, lr = loss.item(), grad_norm.item(), optim_backbone.lr.item(), optim.lr.item()
-      t.set_description(f"loss: {loss:6.6f}, grad_norm: {grad_norm:6.6f}, backbone_lr: {lr_backbone:12.12f}, lr: {lr:12.12f}")
+      loss, grad_norm, lr = loss.item(), grad_norm.item(), optim.lr.item()
+      t.set_description(f"loss: {loss:6.6f}, grad_norm: {grad_norm:6.6f}, lr: {lr:12.12f}")
       wandb.log({
         "loss": loss,
         "grad_norm": grad_norm,
-        "backbone_lr": lr_backbone,
         "lr": lr,
       })
 
       if step % 10000 == 0 and step > 0: safe_save(get_state_dict(model), str(BASE_PATH / f"intermediate/model_{step}.safetensors"))
     safe_save(get_state_dict(model), str(BASE_PATH / f"model.safetensors"))
 
-    bi.terminate()
+  bi.terminate()
