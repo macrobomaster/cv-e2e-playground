@@ -1,4 +1,5 @@
 import glob, math, random, sys, signal
+import multiprocessing
 from multiprocessing import Queue, Process
 
 from tinygrad import dtypes, Tensor, GlobalCounters
@@ -13,10 +14,10 @@ import cv2
 from model import Model
 from main import BASE_PATH
 
-BS = 16
+BS = 32
 WARMUP_STEPS = 200
-START_LR = 0.003
-END_LR = 0.001
+START_LR = 0.001
+END_LR = 0.0005
 STEPS = 5000
 
 def loss_fn(pred: tuple[Tensor, Tensor], y: Tensor):
@@ -65,10 +66,11 @@ def load_single_file(file):
   return img, (detected, x, y, color)
 
 def minibatch_iterator(q: Queue):
+  pool = multiprocessing.Pool(4)
   while True:
     random.shuffle(preprocessed_train_files)
     for i in range(0, len(preprocessed_train_files) - BS, BS):
-      batched = map(load_single_file, preprocessed_train_files[i : i + BS])
+      batched = pool.map(load_single_file, preprocessed_train_files[i : i + BS])
       x_b, y_b = zip(*batched)
       q.put((list(x_b), list(y_b)))
 
@@ -87,11 +89,11 @@ if __name__ == "__main__":
 
   model = Model()
 
-  sn_state_dict = safe_load("./weights/shufflenetv2.safetensors")
-  load_state_dict(model.backbone, sn_state_dict)
+  # sn_state_dict = safe_load("./weights/shufflenetv2.safetensors")
+  # load_state_dict(model.backbone, sn_state_dict)
 
-  # state_dict = safe_load(str(BASE_PATH / "model.safetensors"))
-  # load_state_dict(model, state_dict)
+  state_dict = safe_load(str(BASE_PATH / "model.safetensors"))
+  load_state_dict(model, state_dict)
 
   parameters_backbone, parameters = [], []
   for key, value in get_state_dict(model).items():
@@ -101,7 +103,7 @@ if __name__ == "__main__":
   # optim = AdamW(parameters, wd=1e-4)
 
   # start batch iterator in a separate process
-  bi_queue = Queue(4)
+  bi_queue = Queue(256)
   bi = Process(target=minibatch_iterator, args=(bi_queue,))
   bi.start()
 
