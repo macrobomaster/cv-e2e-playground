@@ -71,7 +71,7 @@ if __name__ == "__main__":
       print(detected, x, y)
       x, y = smoother_x.update(x, dt), smoother_y.update(y, dt)
       cv2.putText(frame, f"{detected:.3f}, {x:.3f}, {y:.3f}", (10, 60), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (55, 250, 55), 1)
-      if detected > 0.5:
+      if detected > 0.9:
         print(f"detected at {x}, {y}")
         x = x * 320
         y = y * 320
