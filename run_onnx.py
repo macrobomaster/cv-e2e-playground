@@ -8,6 +8,7 @@ from smoother import Smoother
 
 session_options = ort.SessionOptions()
 session_options.graph_optimization_level = ort.GraphOptimizationLevel.ORT_ENABLE_ALL
+session_options.log_severity_level = 0
 session = ort.InferenceSession("model.onnx", session_options, providers=["TensorrtExecutionProvider", "CUDAExecutionProvider"])
 smoother_x, smoother_y = Smoother(), Smoother()
 
