@@ -81,6 +81,7 @@ while True:
 
   detected = x_obj_np.item()
   x, y = x_pos_np[0][0][0], x_pos_np[0][0][1]
+  print(detected, x, y)
 
   if detected > 0.9:
       print(f"detected at {x}, {y}")
