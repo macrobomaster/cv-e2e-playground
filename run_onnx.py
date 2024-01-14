@@ -12,8 +12,8 @@ session_options.log_severity_level = 0
 session = ort.InferenceSession("model.onnx", session_options, providers=["TensorrtExecutionProvider", "CUDAExecutionProvider"])
 smoother_x, smoother_y = Smoother(), Smoother()
 
-cap = cv2.VideoCapture("2744.mp4")
-# cap = cv2.VideoCapture(1)
+# cap = cv2.VideoCapture("2744.mp4")
+cap = cv2.VideoCapture(0)
 
 st = time.perf_counter()
 while True:
