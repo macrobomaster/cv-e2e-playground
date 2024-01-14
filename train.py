@@ -22,10 +22,11 @@ START_LR = 0.001
 END_LR = 0.0005
 STEPS = 10000
 
+def pseudo_huber_loss(pred: Tensor, y: Tensor, delta: float = 1.0): return ((delta*delta) * ((1 + ((pred - y) / delta).square()).sqrt() - 1)).mean()
 def loss_fn(pred: tuple[Tensor, Tensor], y: Tensor):
   obj_loss = pred[0][:, 0, 0].binary_crossentropy_logits(y[:, 0])
-  x_loss = (pred[1][:, 0, 0] - y[:, 1]).abs().mean()
-  y_loss = (pred[1][:, 0, 1] - y[:, 2]).abs().mean()
+  x_loss = pseudo_huber_loss(pred[1][:, 0, 0], y[:, 1])
+  y_loss = pseudo_huber_loss(pred[1][:, 0, 1], y[:, 2])
   return obj_loss + x_loss + y_loss
 
 @TinyJit
