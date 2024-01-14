@@ -11,9 +11,9 @@ session_options.graph_optimization_level = ort.GraphOptimizationLevel.ORT_ENABLE
 session = ort.InferenceSession("model.onnx", session_options)
 smoother_x, smoother_y = Smoother(), Smoother()
 
-cap = cv2.VideoCapture("2744.mp4")
+# cap = cv2.VideoCapture("2744.mp4")
+cap = cv2.VideoCapture(1)
 
-color = "red"
 st = time.perf_counter()
 while True:
   ret, frame = cap.read()
