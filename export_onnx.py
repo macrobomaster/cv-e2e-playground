@@ -158,9 +158,10 @@ def make_EncoderBlock(n: EncoderBlock, name: str, x: str):
   cv1, cv1_nodes, cv1_weights = make_Conv2d(n.cv1, name + ".cv1", norm1.output[0])
   nl1, nl1_nodes, nl1_weights = make_mish(name + ".nl1", cv1.output[0])
   cv2, cv2_nodes, cv2_weights = make_Conv2d(n.cv2, name + ".cv2", nl1.output[0])
-  add2 = make_node("Add", [norm1.output[0], cv2.output[0]], [name + ".add2"], name=name + ".add2")
+  nl2, nl2_nodes, nl2_weights = make_mish(name + ".nl2", cv2.output[0])
+  add2 = make_node("Add", [norm1.output[0], nl2.output[0]], [name + ".add2"], name=name + ".add2")
   norm2, norm2_nodes, norm2_weights = make_BatchNorm2d(n.norm2, name + ".norm2", add2.output[0])
-  return norm2, [*attention_nodes, mul, add1, *norm1_nodes, *cv1_nodes, *nl1_nodes, *cv2_nodes, add2, *norm2_nodes], [*attention_weights, *norm1_weights, *cv1_weights, *nl1_weights, *cv2_weights, *norm2_weights]
+  return norm2, [*attention_nodes, mul, add1, *norm1_nodes, *cv1_nodes, *nl1_nodes, *cv2_nodes, *nl2_nodes, add2, *norm2_nodes], [*attention_weights, *norm1_weights, *cv1_weights, *nl1_weights, *cv2_weights, *nl2_weights, *norm2_weights]
 
 def make_SEBlock(n: SEBlock, name: str, x: str):
   cv1, cv1_nodes, cv1_weights = make_Conv2d(n.cv1, name + ".cv1", x)
