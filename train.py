@@ -14,11 +14,11 @@ import cv2
 from model import Model
 from main import BASE_PATH
 
-BS = 32
-WARMUP_STEPS = 200
-START_LR = 0.001
-END_LR = 0.0005
-STEPS = 5000
+BS = 16
+WARMUP_STEPS = 1000
+START_LR = 0.003
+END_LR = 0.001
+STEPS = 10000
 
 def loss_fn(pred: tuple[Tensor, Tensor], y: Tensor):
   obj_loss = pred[0][:, 0, 0].binary_crossentropy_logits(y[:, 0])
@@ -89,13 +89,13 @@ if __name__ == "__main__":
 
   model = Model()
 
-  # sn_state_dict = safe_load("./weights/shufflenetv2.safetensors")
-  # load_state_dict(model.backbone, sn_state_dict)
+  sn_state_dict = safe_load("./weights/shufflenetv2.safetensors")
+  load_state_dict(model.backbone, sn_state_dict)
 
-  state_dict = safe_load(str(BASE_PATH / "model.safetensors"))
-  load_state_dict(model, state_dict)
+  # state_dict = safe_load(str(BASE_PATH / "model.safetensors"))
+  # load_state_dict(model, state_dict)
 
-  parameters_backbone, parameters = [], []
+  parameters = []
   for key, value in get_state_dict(model).items():
     # if "backbone" in key: continue
     parameters.append(value)
@@ -113,7 +113,7 @@ if __name__ == "__main__":
     sys.exit(0)
   signal.signal(signal.SIGINT, sigint_handler)
 
-  with Context(BEAM=2):
+  with Context(BEAM=4):
     for step in (t := trange(STEPS)):
       GlobalCounters.reset()
       new_lr = get_lr(step)

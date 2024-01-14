@@ -42,8 +42,8 @@ if __name__ == "__main__":
 
   @TinyJit
   def pred(img):
-    obj, pos, att = model(img)
-    return obj[0, 0].realize(), pos[0, 0].realize(), att[0].mean(0).float().realize()
+    obj, pos = model(img)
+    return obj[0, 0].realize(), pos[0, 0].realize()
 
   cap = cv2.VideoCapture("2743.mp4")
   # cap = cv2.VideoCapture(1)
@@ -61,7 +61,7 @@ if __name__ == "__main__":
       frame = frame[-320:, 200:320+200]
 
       img = Tensor(frame).reshape(1, 320, 320, 3)
-      obj, pos, att = pred(img)
+      obj, pos = pred(img)
 
       # show detection
       detected, x, y = obj.item(), pos[0].item(), pos[1].item()
@@ -79,7 +79,6 @@ if __name__ == "__main__":
         cv2.putText(frame, f"{int(x)}, {int(y)}", (int(x), int(y)), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (55, 250, 55), 2)
 
       cv2.imshow("preview", cv2.cvtColor(frame, cv2.COLOR_RGB2BGR))
-      cv2.imshow("att", cv2.resize(att.reshape(10, 10).numpy(), (320, 320)))
 
       key = cv2.waitKey(1)
       if key == ord("q"): break

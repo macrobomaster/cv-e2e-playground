@@ -45,14 +45,14 @@ class EncoderBlock:
 
   def __call__(self, x: Tensor):
     # attention
-    xx = x * (att := self.attention(x))
+    xx = x * self.attention(x)
     x = x + xx
     x = self.norm1(x.float()).cast(dtypes.default_float)
     # feedforward
     xx = self.cv1(x).mish()
-    xx = self.cv2(xx)
+    xx = self.cv2(xx).mish()
     x = x + xx
-    return self.norm2(x.float()).cast(dtypes.default_float), att
+    return self.norm2(x.float()).cast(dtypes.default_float)
 
 class SEBlock:
   def __init__(self, dim):
@@ -65,39 +65,28 @@ class SEBlock:
     xx = self.cv2(xx).sigmoid()
     return x * xx
 
-class CompressBlock:
-  def __init__(self, dim):
-    self.pw = Conv2d(dim, dim, kernel_size=1, bias=False)
-    self.norm1 = BatchNorm2d(dim)
-    self.dw = Conv2d(dim, dim, kernel_size=5, stride=2, padding=1, groups=dim, bias=False)
-    self.norm2 = BatchNorm2d(dim)
-  def __call__(self, x: Tensor):
-    x = self.norm1(self.pw(x).float()).cast(dtypes.default_float).mish()
-    x = self.norm2(self.dw(x).float()).cast(dtypes.default_float).mish()
-    return x
-
 class Encoder:
   def __init__(self, dim):
     self.dim = dim
 
     self.encoders = [EncoderBlock(dim) for _ in range(2)]
     self.se = SEBlock(dim)
-    self.compress = CompressBlock(dim)
     self.cv_out = Conv2d(dim, 32, kernel_size=1, bias=False)
 
   def __call__(self, x: Tensor):
-    for encoder in self.encoders: x, att = encoder(x)
+    x = x.sequential(self.encoders)
     x = self.se(x).mish()
-    x = self.compress(x)
     x = self.cv_out(x).flatten(1)
-    return x, att
+    return x
 
 class ObjHead:
   def __init__(self, dim, num_outputs):
-    self.l1 = Linear(dim, num_outputs)
+    self.l1 = Linear(dim, dim)
+    self.l2 = Linear(dim, num_outputs)
   def __call__(self, x: Tensor):
-    if Tensor.training: return self.l1(x).reshape(x.shape[0], -1, 1)
-    else: return self.l1(x).sigmoid().reshape(x.shape[0], -1, 1)
+    x = self.l1(x).mish()
+    if Tensor.training: return self.l2(x).reshape(x.shape[0], -1, 1)
+    else: return self.l2(x).sigmoid().reshape(x.shape[0], -1, 1)
 
 class PosHead:
   def __init__(self, dim, num_outputs):
@@ -114,9 +103,10 @@ class Model:
   def __init__(self):
     self.backbone = ShuffleNetV2()
 
-    self.input_conv = Conv2d(1024, 512, kernel_size=1, bias=False)
+    self.input_conv = Conv2d(1024, 512, kernel_size=3, bias=False)
     self.enc = Encoder(512)
 
+    self.proj = Linear(2048, 512)
     self.obj_head = ObjHead(512, 1)
     self.pos_head = PosHead(512, 1)
 
@@ -131,16 +121,29 @@ class Model:
 
     # encoder-decoder
     x = self.input_conv(x)
-    x, att = self.enc(x)
+    x = self.enc(x)
 
     # heads
+    x = self.proj(x).mish()
     x_obj = self.obj_head(x)
     x_pos = self.pos_head(x)
 
     # cast to correct output type
     if not Tensor.training: x_obj, x_pos = x_obj.cast(dtypes.default_float), x_pos.cast(dtypes.default_float)
-    return (x_obj, x_pos) if Tensor.training else (x_obj, x_pos, att)
+    return x_obj, x_pos
 
 if __name__ == "__main__":
   from tinygrad.nn.state import get_parameters
-  print("model params:", sum(x.numel() for x in get_parameters(Model())) / 1e6)
+  from tinygrad import GlobalCounters
+
+  model = Model()
+  print("model params:", sum(x.numel() for x in get_parameters(model)) / 1e6)
+  x_obj, x_pos = model(Tensor.zeros(1, 320, 320, 3))
+  x_obj.realize()
+  x_pos.realize()
+
+  GlobalCounters.reset()
+
+  x_obj, x_pos = model(Tensor.zeros(1, 320, 320, 3))
+  x_obj.realize()
+  x_pos.realize()

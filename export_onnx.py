@@ -11,7 +11,7 @@ from onnx.checker import check_model
 import numpy as np
 
 from main import BASE_PATH
-from model import CompressBlock, Model, ObjHead, PosHead, DFCAttention, EncoderBlock, Encoder, SEBlock
+from model import Model, ObjHead, PosHead, DFCAttention, EncoderBlock, Encoder, SEBlock
 from shufflenet import ShuffleNetV2, ShuffleV2Block
 
 def make_Conv2d(n: Conv2d, name: str, x: str):
@@ -170,13 +170,6 @@ def make_SEBlock(n: SEBlock, name: str, x: str):
   mul = make_node("Mul", [x, sigmoid.output[0]], [name], name=name)
   return mul, [*cv1_nodes, relu, *cv2_nodes, sigmoid, mul], [*cv1_weights, *cv2_weights]
 
-def make_CompressBlock(n: CompressBlock, name: str, x: str):
-  pw, pw_nodes, pw_weights = make_Conv2d(n.pw, name + ".pw", x)
-  norm1, norm1_nodes, norm1_weights = make_BatchNorm2d(n.norm1, name + ".norm1", pw.output[0])
-  dw, dw_nodes, dw_weights = make_Conv2d(n.dw, name + ".dw", norm1.output[0])
-  norm2, norm2_nodes, norm2_weights = make_BatchNorm2d(n.norm2, name + ".norm2", dw.output[0])
-  return norm2, [*pw_nodes, *norm1_nodes, *dw_nodes, *norm2_nodes], [*pw_weights, *norm1_weights, *dw_weights, *norm2_weights]
-
 def make_Encoder(n: Encoder, name: str, x: str):
   encoders, encoder_nodes, encoder_weights, encoder_input = [], [], [], x
   for i, encoder in enumerate(n.encoders):
@@ -187,18 +180,20 @@ def make_Encoder(n: Encoder, name: str, x: str):
     encoder_input = encoder.output[0]
 
   se, se_nodes, se_weights = make_SEBlock(n.se, name + ".se", encoder_input)
-  compress, compress_nodes, compress_weights = make_CompressBlock(n.compress, name + ".compress", se.output[0])
-  cv_out, cv_out_nodes, cv_out_weights = make_Conv2d(n.cv_out, name + ".cv_out", compress.output[0])
+  nl1, nl1_nodes, nl1_weights = make_mish(name + ".nl1", se.output[0])
+  cv_out, cv_out_nodes, cv_out_weights = make_Conv2d(n.cv_out, name + ".cv_out", nl1.output[0])
   flatten = make_node("Flatten", [cv_out.output[0]], [name + ".flatten"], name=name + ".flatten", axis=1)
 
-  return flatten, [*encoder_nodes, *se_nodes, *compress_nodes, *cv_out_nodes, flatten], [*encoder_weights, *se_weights, *compress_weights, *cv_out_weights]
+  return flatten, [*encoder_nodes, *se_nodes, *nl1_nodes, *cv_out_nodes, flatten], [*encoder_weights, *se_weights, *nl1_weights, *cv_out_weights]
 
 def make_ObjHead(n: ObjHead, name: str, x: str):
   l1, l1_nodes, l1_weights = make_Linear(n.l1, name + ".l1", x)
-  sigmoid = make_node("Sigmoid", [l1.output[0]], [name + ".sigmoid"], name=name + ".sigmoid")
-  output_shape = numpy_helper.from_array(np.array([1, n.l1.weight.shape[0] // 2, 1], dtype=np.int64), name + ".output_shape")
+  nl1, nl1_nodes, nl1_weights = make_mish(name + ".nl1", l1.output[0])
+  l2, l2_nodes, l2_weights = make_Linear(n.l2, name + ".l2", nl1.output[0])
+  sigmoid = make_node("Sigmoid", [l2.output[0]], [name + ".sigmoid"], name=name + ".sigmoid")
+  output_shape = numpy_helper.from_array(np.array([1, n.l2.weight.shape[0] // 2, 1], dtype=np.int64), name + ".output_shape")
   reshape = make_node("Reshape", [sigmoid.output[0], output_shape.name], [name + ".reshape"], name=name + ".reshape")
-  return reshape, [*l1_nodes, sigmoid, reshape], [*l1_weights, output_shape]
+  return reshape, [*l1_nodes, *nl1_nodes, *l2_nodes, sigmoid, reshape], [*l1_weights, *nl1_weights, *l2_weights, output_shape]
 
 def make_PosHead(n: PosHead, name: str, x: str):
   l1, l1_nodes, l1_weights = make_Linear(n.l1, name + ".l1", x)
@@ -217,10 +212,12 @@ def make_Model(model: Model, name: str, x: str):
   input_conv, input_conv_nodes, input_conv_weights = make_Conv2d(model.input_conv, name + ".input_conv", backbone.output[0])
   encdec, encdec_nodes, encdec_weights = make_Encoder(model.enc, name + ".enc", input_conv.output[0])
 
-  obj_head, obj_head_nodes, obj_head_weights = make_ObjHead(model.obj_head, name + ".obj_head", encdec.output[0])
-  pos_head, pos_head_nodes, pos_head_weights = make_PosHead(model.pos_head, name + ".pos_head", encdec.output[0])
+  proj, proj_nodes, proj_weights = make_Linear(model.proj, name + ".proj", encdec.output[0])
+  proj_nl, proj_nl_nodes, proj_nl_weights = make_mish(name + ".proj_nl", proj.output[0])
+  obj_head, obj_head_nodes, obj_head_weights = make_ObjHead(model.obj_head, name + ".obj_head", proj_nl.output[0])
+  pos_head, pos_head_nodes, pos_head_weights = make_PosHead(model.pos_head, name + ".pos_head", proj_nl.output[0])
 
-  return (obj_head, pos_head), [*backbone_nodes, *input_conv_nodes, *encdec_nodes, *obj_head_nodes, *pos_head_nodes], [*backbone_weights, *input_conv_weights, *encdec_weights, *obj_head_weights, *pos_head_weights]
+  return (obj_head, pos_head), [*backbone_nodes, *input_conv_nodes, *encdec_nodes, *proj_nodes, *proj_nl_nodes, *obj_head_nodes, *pos_head_nodes], [*backbone_weights, *input_conv_weights, *encdec_weights, *proj_weights, *proj_nl_weights, *obj_head_weights, *pos_head_weights]
 
 def make_preprocess(name: str, x: str):
   div_const = numpy_helper.from_array(np.array([255], dtype=np.float16), name + ".div_const")
