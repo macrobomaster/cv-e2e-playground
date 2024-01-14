@@ -54,6 +54,7 @@ import numpy as np
 
 sess_options = ort.SessionOptions()
 sess_options.graph_optimization_level = ort.GraphOptimizationLevel.ORT_ENABLE_ALL
+sess_options.log_severity_level = 0
 providers = ["TensorrtExecutionProvider", ("CUDAExecutionProvider", {"enable_cuda_graph": 1})]
 session = ort.InferenceSession("model.onnx", sess_options, providers)
 
