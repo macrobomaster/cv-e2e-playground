@@ -57,10 +57,10 @@ providers = [("CUDAExecutionProvider", {"enable_cuda_graph": 1})]
 session = ort.InferenceSession("model.onnx", sess_options, providers)
 
 io_binding = session.io_binding()
-x = ort.OrtValue.ortvalue_from_shape_and_type((1, 320, 320, 3), np.float16, "cuda", 0)
+x_in = ort.OrtValue.ortvalue_from_shape_and_type((1, 320, 320, 3), np.float16, "cuda", 0)
 x_obj = ort.OrtValue.ortvalue_from_shape_and_type((1, 1, 1), np.float16, "cuda", 0)
 x_pos = ort.OrtValue.ortvalue_from_shape_and_type((1, 1, 2), np.float16, "cuda", 0)
-io_binding.bind_ortvalue_input("x", x)
+io_binding.bind_ortvalue_input("x", x_in)
 io_binding.bind_ortvalue_output("x_obj", x_obj)
 io_binding.bind_ortvalue_output("x_pos", x_pos)
 session.run_with_iobinding(io_binding)
@@ -72,7 +72,7 @@ while True:
   # convert to rgb
   frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
   frame = frame[-320:, -320:]
-  x.update_inplace(np.expand_dims(frame, 0).astype(np.float16))
+  x_in.update_inplace(np.expand_dims(frame, 0).astype(np.float16))
 
   session.run_with_iobinding(io_binding)
 
