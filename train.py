@@ -2,7 +2,8 @@ import glob, math, random, sys, signal
 import multiprocessing
 from multiprocessing import Queue, Process
 
-from tinygrad import dtypes, Tensor, GlobalCounters
+from tinygrad import dtypes, Tensor, GlobalCounters, Device
+from tinygrad.codegen.kernel import LinearizerOptions
 from tinygrad.jit import TinyJit
 from tinygrad.nn.optim import SGD, LAMB, AdamW
 from tinygrad.nn.state import get_parameters, get_state_dict, load_state_dict, safe_load, safe_save
@@ -16,8 +17,9 @@ from main import BASE_PATH
 
 BS = 16
 WARMUP_STEPS = 1000
-START_LR = 0.003
-END_LR = 0.001
+WARMPUP_LR = 0.0001
+START_LR = 0.001
+END_LR = 0.0005
 STEPS = 10000
 
 def loss_fn(pred: tuple[Tensor, Tensor], y: Tensor):
@@ -49,7 +51,7 @@ warming_up = True
 def get_lr(i: int) -> float:
   global warming_up
   if warming_up:
-    lr = START_LR * (i / WARMUP_STEPS)
+    lr = START_LR * (i / WARMUP_STEPS) + WARMPUP_LR * (1 - i / WARMUP_STEPS)
     if i >= WARMUP_STEPS: warming_up = False
   else: lr = END_LR + 0.5 * (START_LR - END_LR) * (1 + math.cos(((i - WARMUP_STEPS) / (STEPS - WARMUP_STEPS)) * math.pi))
   return lr
@@ -89,11 +91,11 @@ if __name__ == "__main__":
 
   model = Model()
 
-  sn_state_dict = safe_load("./weights/shufflenetv2.safetensors")
-  load_state_dict(model.backbone, sn_state_dict)
+  # sn_state_dict = safe_load("./weights/shufflenetv2.safetensors")
+  # load_state_dict(model.backbone, sn_state_dict)
 
-  # state_dict = safe_load(str(BASE_PATH / "model.safetensors"))
-  # load_state_dict(model, state_dict)
+  state_dict = safe_load(str(BASE_PATH / "model_0.safetensors"))
+  load_state_dict(model, state_dict)
 
   parameters = []
   for key, value in get_state_dict(model).items():
@@ -103,7 +105,7 @@ if __name__ == "__main__":
   # optim = AdamW(parameters, wd=1e-4)
 
   # start batch iterator in a separate process
-  bi_queue = Queue(256)
+  bi_queue = Queue(4)
   bi = Process(target=minibatch_iterator, args=(bi_queue,))
   bi.start()
 
@@ -120,7 +122,7 @@ if __name__ == "__main__":
       if step == 0:
         x, y = bi_queue.get()
         x, y = Tensor(x, dtype=dtypes.uint8), Tensor(y, dtype=dtypes.default_float)
-      loss, grad_norm = train_step(x, y, Tensor([new_lr], dtype=dtypes.float32))
+      loss, grad_norm = train_step(x, y, Tensor([new_lr], dtype=dtypes.default_float))
       x, y = bi_queue.get()
       x, y = Tensor(x, dtype=dtypes.uint8), Tensor(y, dtype=dtypes.default_float)
       loss, grad_norm, lr = loss.item(), grad_norm.item(), optim.lr.item()

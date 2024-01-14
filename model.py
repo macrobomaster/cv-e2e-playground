@@ -6,10 +6,8 @@ from tinygrad import Tensor, dtypes
 from shufflenet import ShuffleNetV2
 
 def upsample(x: Tensor, scale_factor: int):
-  assert len(x.shape) > 2 and len(x.shape) <= 5
-  (b, c), _lens = x.shape[:2], len(x.shape[2:])
-  tmp = (x.reshape([b, c, -1] + [1] * _lens) * Tensor.ones(*[1, 1, 1] + [scale_factor] * _lens)).reshape(list(x.shape) + [scale_factor] * _lens)
-  return tmp.permute([0, 1] + list(chain.from_iterable([[y + 2, y + 2 + _lens] for y in range(_lens)]))).reshape([b, c] + [x * scale_factor for x in x.shape[2:]])
+  bs, c, py, px = x.shape
+  return x.reshape(bs, c, py, 1, px, 1).expand(bs, c, py, scale_factor, px, scale_factor).reshape(bs, c, py * scale_factor, px * scale_factor)
 
 class DFCAttention:
   def __init__(self, dim, *, attention_size=5):
