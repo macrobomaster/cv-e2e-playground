@@ -5,9 +5,9 @@ from tinygrad import Tensor, dtypes
 
 from shufflenet import ShuffleNetV2
 
-def upsample(x: Tensor, scale_factor: int):
+def upsample(x: Tensor, scale: int):
   bs, c, py, px = x.shape
-  return x.reshape(bs, c, py, 1, px, 1).expand(bs, c, py, scale_factor, px, scale_factor).reshape(bs, c, py * scale_factor, px * scale_factor)
+  return x.reshape(bs, c, py, 1, px, 1).expand(bs, c, py, scale, px, scale).reshape(bs, c, py * scale, px * scale)
 
 class DFCAttention:
   def __init__(self, dim, *, attention_size=5):
