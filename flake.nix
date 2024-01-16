@@ -19,29 +19,34 @@
           inherit system;
           overlays = [
             inputs.tinygrad.overlays.default
+            (final: prev: {
+              pythonPackagesExtensions =
+                prev.pythonPackagesExtensions
+                ++ [
+                  (python-final: python-prev: {
+                    opencv4 = python-prev.opencv4.override {
+                      enableGtk3 = true;
+                    };
+                  })
+                ];
+            })
           ];
         };
       in {
         devShell = pkgs.mkShell {
           packages = let
             python-packages = p: let
-              opencv = p.opencv4.override {
-                enableGtk3 = true;
-              };
               onnxconverter-common = p.onnxconverter-common.override {
                 protobuf = pkgs.protobuf;
               };
-              albumentations = p.albumentations.override {
-                # opencv4 = opencv;
-              };
             in
               with p; [
-                # albumentations
+                albumentations
                 llvmlite
                 onnx
                 onnxconverter-common
                 onnxruntime
-                opencv
+                opencv4
                 pydot
                 tinygrad
                 torch
