@@ -48,11 +48,11 @@ class Model:
   def __init__(self):
     # self.backbone = Backbone()
     self.backbone = ShuffleNetV2()
-    self.head_conv = Conv2d(1024, 64, 1, 1, 0)
-    self.proj = Linear(2048, 512)
-    self.ffn = FFN(512, blocks=2)
-    self.obj_head = ObjHead(512, 64, num_outputs=1)
-    self.pos_head = PosHead(512, 64, num_outputs=1)
+    self.head_conv = Conv2d(1024, 32, 1, 1, 0)
+    self.proj = Linear(1024, 256)
+    self.ffn = FFN(256, blocks=2)
+    self.obj_head = ObjHead(256, 64, num_outputs=1)
+    self.pos_head = PosHead(256, 64, num_outputs=1)
 
   def __call__(self, img: Tensor):
     # image normalization
@@ -92,3 +92,4 @@ if __name__ == "__main__":
   x_obj, x_pos = model(Tensor.zeros(1, 128, 256, 3))
   x_obj.realize()
   x_pos.realize()
+  print("model params:", sum(x.numel() for x in get_parameters(model)) / 1e6)
