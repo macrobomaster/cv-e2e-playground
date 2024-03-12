@@ -4,10 +4,11 @@ import time
 import os
 
 import cv2
+import numpy as np
 from tinygrad.codegen.kernel import LinearizerOptions
 from tinygrad.helpers import Context
 from tinygrad import Device, Tensor, dtypes
-from tinygrad.jit import TinyJit
+from tinygrad import TinyJit
 from tinygrad.nn.state import safe_load, load_state_dict, get_state_dict
 from tinygrad import GlobalCounters
 
@@ -16,12 +17,51 @@ from model import Model
 from smoother import Smoother
 
 BASE_PATH = Path(os.environ.get("BASE_PATH", "./"))
+IMG_SIZE_W, IMG_SIZE_H = 256, 128
+
+def resizeAndPad(img, size, padColor=255):
+    h, w = img.shape[:2]
+    sh, sw = size
+
+    # interpolation method
+    if h > sh or w > sw: # shrinking image
+        interp = cv2.INTER_AREA
+
+    else: # stretching image
+        interp = cv2.INTER_CUBIC
+
+    # aspect ratio of image
+    aspect = float(w)/h 
+    saspect = float(sw)/sh
+
+    if (saspect > aspect) or ((saspect == 1) and (aspect <= 1)):  # new horizontal image
+        new_h = sh
+        new_w = np.round(new_h * aspect).astype(int)
+        pad_horz = float(sw - new_w) / 2
+        pad_left, pad_right = np.floor(pad_horz).astype(int), np.ceil(pad_horz).astype(int)
+        pad_top, pad_bot = 0, 0
+
+    elif (saspect < aspect) or ((saspect == 1) and (aspect >= 1)):  # new vertical image
+        new_w = sw
+        new_h = np.round(float(new_w) / aspect).astype(int)
+        pad_vert = float(sh - new_h) / 2
+        pad_top, pad_bot = np.floor(pad_vert).astype(int), np.ceil(pad_vert).astype(int)
+        pad_left, pad_right = 0, 0
+
+    # set pad color
+    if len(img.shape) == 3 and not isinstance(padColor, (list, tuple, np.ndarray)): # color image but only one color provided
+        padColor = [padColor]*3
+
+    # scale and pad
+    scaled_img = cv2.resize(img, (new_w, new_h), interpolation=interp)
+    scaled_img = cv2.copyMakeBorder(scaled_img, pad_top, pad_bot, pad_left, pad_right, borderType=cv2.BORDER_CONSTANT, value=padColor)
+
+    return scaled_img
 
 if __name__ == "__main__":
   Tensor.no_grad = True
   Tensor.training = False
   dtypes.default_float = dtypes.float16
-  Device[Device.DEFAULT].linearizer_opts = LinearizerOptions("HIP", supports_float4=False)
 
   # cap_queue = Queue(4)
   # cap = ThreadedCapture(cap_queue, 1)
@@ -45,10 +85,10 @@ if __name__ == "__main__":
   @TinyJit
   def pred(img):
     obj, pos = model(img)
-    return obj[0, 0].realize(), pos[0, 0].realize()
+    return obj[0, 0].float().realize(), pos[0, 0].float().realize()
 
-  cap = cv2.VideoCapture("2743.mp4")
-  # cap = cv2.VideoCapture(1)
+  # cap = cv2.VideoCapture("2743.mp4")
+  cap = cv2.VideoCapture(1)
 
   st = time.perf_counter()
   with Context(BEAM=4):
@@ -60,9 +100,12 @@ if __name__ == "__main__":
       if not ret: break
       # convert to rgb
       frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-      frame = frame[-320:, 200:320+200]
+      # resize and pad
+      frame = resizeAndPad(frame, (IMG_SIZE_H, IMG_SIZE_W))
+      # crop center 256x128
+      # frame = frame[256:256+IMG_SIZE_H, 256:256+IMG_SIZE_W]
 
-      img = Tensor(frame).reshape(1, 320, 320, 3)
+      img = Tensor(frame).reshape(1, IMG_SIZE_H, IMG_SIZE_W, 3)
       obj, pos = pred(img)
 
       # show detection
@@ -75,10 +118,10 @@ if __name__ == "__main__":
       cv2.putText(frame, f"{detected:.3f}, {x:.3f}, {y:.3f}", (10, 60), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (55, 250, 55), 1)
       if detected > 0.9:
         print(f"detected at {x}, {y}")
-        x = x * 320
-        y = y * 320
-        cv2.circle(frame, (int(x), int(y)), 10, (0, 50, 255), -1)
-        cv2.putText(frame, f"{int(x)}, {int(y)}", (int(x), int(y)), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (55, 250, 55), 2)
+        x = x * IMG_SIZE_W
+        y = y * IMG_SIZE_H
+        cv2.circle(frame, (int(x), int(y)), 4, (0, 50, 255), -1)
+        cv2.putText(frame, f"{int(x)}, {int(y)}", (int(x), int(y)), cv2.FONT_HERSHEY_SIMPLEX, 0.25, (55, 250, 55), 1)
 
       cv2.imshow("preview", cv2.cvtColor(frame, cv2.COLOR_RGB2BGR))
 

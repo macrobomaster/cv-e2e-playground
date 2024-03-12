@@ -1,112 +1,58 @@
-from itertools import chain
-
 from tinygrad.nn import Conv2d, Linear, BatchNorm2d
 from tinygrad import Tensor, dtypes
 
 from shufflenet import ShuffleNetV2
-
-def upsample(x: Tensor, scale: int):
-  bs, c, py, px = x.shape
-  return x.reshape(bs, c, py, 1, px, 1).expand(bs, c, py, scale, px, scale).reshape(bs, c, py * scale, px * scale)
-
-class DFCAttention:
-  def __init__(self, dim, *, attention_size=5):
-    self.cv = Conv2d(dim, dim, kernel_size=1, bias=False)
-    self.norm = BatchNorm2d(dim)
-
-    # horizontal fc
-    self.hcv = Conv2d(dim, dim, kernel_size=(1, attention_size), padding=(0, attention_size//2), groups=dim, bias=False)
-    self.hnorm = BatchNorm2d(dim)
-    # vertical fc
-    self.vcv = Conv2d(dim, dim, kernel_size=(attention_size, 1), padding=(attention_size//2, 0), groups=dim, bias=False)
-    self.vnorm = BatchNorm2d(dim)
-
-  def __call__(self, x: Tensor) -> Tensor:
-    assert x.shape[-1] % 2 == 0 and x.shape[-2] % 2 == 0, f"attention input must be divisible by 2, got {x.shape}"
-    # downsample
-    xx = x.avg_pool2d(2)
-    # attention map
-    xx = self.norm(self.cv(xx).float()).cast(dtypes.default_float)
-    xx = self.hnorm(self.hcv(xx).float()).cast(dtypes.default_float)
-    xx = self.vnorm(self.vcv(xx).float()).cast(dtypes.default_float)
-    xx = xx.sigmoid()
-    # upsample
-    return upsample(xx, 2)
-
-class EncoderBlock:
-  def __init__(self, dim):
-    self.attention = DFCAttention(dim)
-    self.norm1 = BatchNorm2d(dim)
-    self.cv1 = Conv2d(dim, dim, kernel_size=1, bias=False)
-    self.cv2 = Conv2d(dim, dim, kernel_size=5, padding=2, groups=dim, bias=False)
-    self.norm2 = BatchNorm2d(dim)
-
-  def __call__(self, x: Tensor):
-    # attention
-    xx = x * self.attention(x)
-    x = x + xx
-    x = self.norm1(x.float()).cast(dtypes.default_float)
-    # feedforward
-    xx = self.cv1(x).mish()
-    xx = self.cv2(xx).mish()
-    x = x + xx
-    return self.norm2(x.float()).cast(dtypes.default_float)
-
-class SEBlock:
-  def __init__(self, dim):
-    self.cv1 = Conv2d(dim, dim//16, kernel_size=1, bias=False)
-    self.cv2 = Conv2d(dim//16, dim, kernel_size=1, bias=False)
-
-  def __call__(self, x: Tensor):
-    xx = x.avg_pool2d(x.shape[-1])
-    xx = self.cv1(xx).relu()
-    xx = self.cv2(xx).sigmoid()
-    return x * xx
-
-class Encoder:
-  def __init__(self, dim):
-    self.dim = dim
-
-    self.encoders = [EncoderBlock(dim) for _ in range(2)]
-    self.se = SEBlock(dim)
-    self.cv_out = Conv2d(dim, 32, kernel_size=1, bias=False)
-
-  def __call__(self, x: Tensor):
-    x = x.sequential(self.encoders)
-    x = self.se(x).mish()
-    x = self.cv_out(x).flatten(1)
-    return x
+from backbone import Backbone
 
 class ObjHead:
-  def __init__(self, dim, num_outputs):
-    self.l1 = Linear(dim, dim)
-    self.l2 = Linear(dim, num_outputs)
-  def __call__(self, x: Tensor):
-    x = self.l1(x).mish()
-    if Tensor.training: return self.l2(x).reshape(x.shape[0], -1, 1)
-    else: return self.l2(x).sigmoid().reshape(x.shape[0], -1, 1)
-
-class PosHead:
-  def __init__(self, dim, num_outputs):
+  def __init__(self, in_dim, dim, num_outputs):
+    self.proj = Linear(in_dim, dim)
     self.l1 = Linear(dim, dim)
     self.l2 = Linear(dim, dim)
-    self.l3 = Linear(dim, num_outputs * 2)
+    self.out = Linear(dim, num_outputs)
 
   def __call__(self, x: Tensor):
-    x = self.l1(x).mish()
-    x = self.l2(x).mish()
-    return self.l3(x).sigmoid().reshape(x.shape[0], -1, 2)
+    x = self.proj(x).relu()
+    x_ = self.l1(x).relu()
+    x = (x + self.l2(x_)).relu()
+    if Tensor.training: return self.out(x).reshape(x.shape[0], -1, 1)
+    else: return self.out(x).sigmoid().reshape(x.shape[0], -1, 1)
+
+class PosHead:
+  def __init__(self, in_dim, dim, num_outputs):
+    self.proj = Linear(in_dim, dim)
+    self.l1 = Linear(dim, dim)
+    self.l2 = Linear(dim, dim)
+    self.out = Linear(dim, num_outputs * 2)
+
+  def __call__(self, x: Tensor):
+    x = self.proj(x).relu()
+    x_ = self.l1(x).relu()
+    x = (x + self.l2(x_)).relu()
+    return self.out(x).sigmoid().reshape(x.shape[0], -1, 2)
+
+class FFNBlock:
+  def __init__(self, dim, e=2):
+    self.l1 = Linear(dim, dim * e)
+    self.l2 = Linear(dim * e, dim)
+  def __call__(self, x: Tensor):
+    x_ = self.l1(x).relu()
+    return (x + self.l2(x_)).relu()
+
+class FFN:
+  def __init__(self, dim, blocks=2):
+    self.blocks = [FFNBlock(dim) for _ in range(blocks)]
+  def __call__(self, x: Tensor): return x.sequential(self.blocks)
 
 class Model:
   def __init__(self):
+    # self.backbone = Backbone()
     self.backbone = ShuffleNetV2()
-
-    self.input_conv = Conv2d(1024, 512, kernel_size=3, bias=False)
-    self.enc = Encoder(512)
-
+    self.head_conv = Conv2d(1024, 64, 1, 1, 0)
     self.proj = Linear(2048, 512)
-    self.obj_head = ObjHead(512, 1)
-    self.pos_head = PosHead(512, 1)
+    self.ffn = FFN(512, blocks=2)
+    self.obj_head = ObjHead(512, 64, num_outputs=1)
+    self.pos_head = PosHead(512, 64, num_outputs=1)
 
   def __call__(self, img: Tensor):
     # image normalization
@@ -117,12 +63,13 @@ class Model:
     # backbone
     x = self.backbone(img)
 
-    # encoder-decoder
-    x = self.input_conv(x)
-    x = self.enc(x)
+    # head transform
+    x = self.head_conv(x)
+    x = x.flatten(1)
+    x = self.proj(x).relu()
+    x = self.ffn(x)
 
     # heads
-    x = self.proj(x).mish()
     x_obj = self.obj_head(x)
     x_pos = self.pos_head(x)
 
@@ -136,12 +83,12 @@ if __name__ == "__main__":
 
   model = Model()
   print("model params:", sum(x.numel() for x in get_parameters(model)) / 1e6)
-  x_obj, x_pos = model(Tensor.zeros(1, 320, 320, 3))
+  x_obj, x_pos = model(Tensor.zeros(1, 128, 256, 3))
   x_obj.realize()
   x_pos.realize()
 
   GlobalCounters.reset()
 
-  x_obj, x_pos = model(Tensor.zeros(1, 320, 320, 3))
+  x_obj, x_pos = model(Tensor.zeros(1, 128, 256, 3))
   x_obj.realize()
   x_pos.realize()
