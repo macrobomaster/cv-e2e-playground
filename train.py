@@ -18,7 +18,7 @@ WARMUP_STEPS = 1000
 WARMPUP_LR = 0.0001
 START_LR = 0.005
 END_LR = 0.0001
-STEPS = 10000
+STEPS = 100000
 
 def pseudo_huber_loss(pred: Tensor, y: Tensor, delta: float = 1.0): return ((delta*delta) * ((1 + ((pred - y) / delta).square()).sqrt() - 1)).mean()
 def loss_fn(pred: tuple[Tensor, Tensor], y: Tensor):
