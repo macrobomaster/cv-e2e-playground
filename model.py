@@ -2,7 +2,19 @@ from tinygrad.nn import Conv2d, Linear, BatchNorm2d
 from tinygrad import Tensor, dtypes
 
 from shufflenet import ShuffleNetV2
-from backbone import Backbone
+
+class FFNBlock:
+  def __init__(self, dim, e=2):
+    self.l1 = Linear(dim, dim * e)
+    self.l2 = Linear(dim * e, dim)
+  def __call__(self, x:Tensor):
+    x_ = self.l1(x).relu()
+    return (x + self.l2(x_)).relu()
+
+class FFN:
+  def __init__(self, dim, blocks=2):
+    self.blocks = [FFNBlock(dim) for _ in range(blocks)]
+  def __call__(self, x:Tensor): return x.sequential(self.blocks)
 
 class ObjHead:
   def __init__(self, in_dim, dim, num_outputs):
@@ -10,8 +22,7 @@ class ObjHead:
     self.l1 = Linear(dim, dim)
     self.l2 = Linear(dim, dim)
     self.out = Linear(dim, num_outputs)
-
-  def __call__(self, x: Tensor):
+  def __call__(self, x:Tensor):
     x = self.proj(x).relu()
     x_ = self.l1(x).relu()
     x = (x + self.l2(x_)).relu()
@@ -24,35 +35,34 @@ class PosHead:
     self.l1 = Linear(dim, dim)
     self.l2 = Linear(dim, dim)
     self.out = Linear(dim, num_outputs * 2)
-
-  def __call__(self, x: Tensor):
+  def __call__(self, x:Tensor):
     x = self.proj(x).relu()
     x_ = self.l1(x).relu()
     x = (x + self.l2(x_)).relu()
     return self.out(x).sigmoid().reshape(x.shape[0], -1, 2)
 
-class FFNBlock:
-  def __init__(self, dim, e=2):
-    self.l1 = Linear(dim, dim * e)
-    self.l2 = Linear(dim * e, dim)
-  def __call__(self, x: Tensor):
-    x_ = self.l1(x).relu()
-    return (x + self.l2(x_)).relu()
+class Neck:
+  def __init__(self, cin:int, dim:int):
+    self.conv = Conv2d(cin, 32, 1, 1, 0)
+    self.proj = Linear(1024, dim)
+    self.ffn = FFN(dim, blocks=2)
+  def __call__(self, x:Tensor) -> Tensor:
+    x = self.conv(x)
+    x = x.flatten(1)
+    x = self.proj(x).relu()
+    return self.ffn(x)
 
-class FFN:
-  def __init__(self, dim, blocks=2):
-    self.blocks = [FFNBlock(dim) for _ in range(blocks)]
-  def __call__(self, x: Tensor): return x.sequential(self.blocks)
+class Head:
+  def __init__(self, dim:int, num_outputs:int):
+    self.obj = ObjHead(dim, 64, num_outputs)
+    self.pos = PosHead(dim, 64, num_outputs)
+  def __call__(self, x:Tensor) -> tuple[Tensor, Tensor]: return self.obj(x), self.pos(x)
 
 class Model:
   def __init__(self):
-    # self.backbone = Backbone()
     self.backbone = ShuffleNetV2()
-    self.head_conv = Conv2d(1024, 32, 1, 1, 0)
-    self.proj = Linear(1024, 256)
-    self.ffn = FFN(256, blocks=2)
-    self.obj_head = ObjHead(256, 64, num_outputs=1)
-    self.pos_head = PosHead(256, 64, num_outputs=1)
+    self.neck = Neck(1024, 256)
+    self.head = Head(256, num_outputs=1)
 
   def __call__(self, img: Tensor):
     # image normalization
@@ -63,19 +73,15 @@ class Model:
     # backbone
     x = self.backbone(img)
 
-    # head transform
-    x = self.head_conv(x)
-    x = x.flatten(1)
-    x = self.proj(x).relu()
-    x = self.ffn(x)
+    # neck
+    x = self.neck(x)
 
-    # heads
-    x_obj = self.obj_head(x)
-    x_pos = self.pos_head(x)
+    # head
+    obj, pos = self.head(x)
 
     # cast to correct output type
-    if not Tensor.training: x_obj, x_pos = x_obj.cast(dtypes.default_float), x_pos.cast(dtypes.default_float)
-    return x_obj, x_pos
+    if not Tensor.training: obj, pos = obj.cast(dtypes.default_float), pos.cast(dtypes.default_float)
+    return obj, pos
 
 if __name__ == "__main__":
   from tinygrad.nn.state import get_parameters
