@@ -10,7 +10,7 @@ from main import resizeAndPad, IMG_SIZE_H, IMG_SIZE_W
 session_options = ort.SessionOptions()
 session_options.graph_optimization_level = ort.GraphOptimizationLevel.ORT_ENABLE_ALL
 # session_options.log_severity_level = 0
-session = ort.InferenceSession("model_optim.onnx", session_options)
+session = ort.InferenceSession("model.onnx", session_options)
 smoother_x, smoother_y = Smoother(), Smoother()
 
 cap = cv2.VideoCapture("2744.mp4")
