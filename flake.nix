@@ -47,6 +47,7 @@
                 onnxconverter-common
                 onnxruntime
                 opencv4
+                pillow
                 pydot
                 tinygrad
                 torch
