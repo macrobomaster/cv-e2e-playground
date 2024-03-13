@@ -1,7 +1,7 @@
-from tinygrad.nn import Conv2d, Linear, BatchNorm2d
+from tinygrad.nn import Conv2d, Linear
 from tinygrad import Tensor, dtypes
 
-from shufflenet import ShuffleNetV2
+from shufflenet import ShuffleNetV2, BatchNorm2d
 
 class FFNBlock:
   def __init__(self, dim, e=2):
@@ -15,6 +15,16 @@ class FFN:
   def __init__(self, dim, blocks=2):
     self.blocks = [FFNBlock(dim) for _ in range(blocks)]
   def __call__(self, x:Tensor): return x.sequential(self.blocks)
+
+class SE:
+  def __init__(self, dim:int):
+    self.cv1 = Conv2d(dim, dim//16, kernel_size=1, bias=False)
+    self.cv2 = Conv2d(dim//16, dim, kernel_size=1, bias=False)
+  def __call__(self, x: Tensor):
+    xx = x.mean((2, 3), keepdim=True)
+    xx = self.cv1(xx).relu()
+    xx = self.cv2(xx).sigmoid()
+    return x * xx
 
 class ObjHead:
   def __init__(self, in_dim, dim, num_outputs):
@@ -43,11 +53,14 @@ class PosHead:
 
 class Neck:
   def __init__(self, cin:int, dim:int):
+    self.se = SE(cin)
     self.conv = Conv2d(cin, 32, 1, 1, 0)
+    self.bn = BatchNorm2d(32)
     self.proj = Linear(1024, dim)
     self.ffn = FFN(dim, blocks=2)
   def __call__(self, x:Tensor) -> Tensor:
-    x = self.conv(x)
+    x = self.se(x)
+    x = self.bn(self.conv(x))
     x = x.flatten(1)
     x = self.proj(x).relu()
     return self.ffn(x)

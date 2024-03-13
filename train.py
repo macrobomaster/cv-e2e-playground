@@ -25,8 +25,9 @@ def loss_fn(pred: tuple[Tensor, Tensor], y: Tensor):
   obj_loss = pred[0][:, 0, 0].binary_crossentropy_logits(y[:, 0])
   # x_loss = pseudo_huber_loss(pred[1][:, 0, 0], y[:, 1])
   # y_loss = pseudo_huber_loss(pred[1][:, 0, 1], y[:, 2])
-  x_loss = (pred[1][:, 0, 0] - y[:, 1]).abs().mul(pred[0][:, 0, 0].sigmoid() + y[:, 0] + 0.4).mean()
-  y_loss = (pred[1][:, 0, 1] - y[:, 2]).abs().mul(pred[0][:, 0, 0].sigmoid() + y[:, 0] + 0.4).mean()
+  leaky_gate = pred[0][:, 0, 0].sigmoid() + y[:, 0] + 0.4
+  x_loss = (pred[1][:, 0, 0] - y[:, 1]).abs().mul(leaky_gate).mean()
+  y_loss = (pred[1][:, 0, 1] - y[:, 2]).abs().mul(leaky_gate).mean()
 
   return obj_loss + x_loss + y_loss
 
@@ -100,8 +101,8 @@ if __name__ == "__main__":
   for epoch in range(EPOCHS):
     batch_iter = iter(tqdm(batch_load(BS), total=STEPS_PER_EPOCH, desc=f"epoch {epoch}"))
     i, proc = 0, single_batch(batch_iter)
-    st = time.perf_counter()
     while proc is not None:
+      st = time.perf_counter()
       GlobalCounters.reset()
 
       lr = get_lr(steps)
@@ -128,7 +129,6 @@ if __name__ == "__main__":
         "gb": GlobalCounters.mem_used / 1e9, "gbps": GlobalCounters.mem_used * 1e-9 / (at - st), "gflops": GlobalCounters.global_ops * 1e-9 / (at - st)
       })
 
-      st = at
       proc, next_proc = next_proc, None
       i += 1
       steps += 1

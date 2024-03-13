@@ -1,6 +1,10 @@
 from typing import Tuple
-from tinygrad import Tensor, Device, dtypes
-from tinygrad.nn import Conv2d, BatchNorm2d, Linear
+from tinygrad import Tensor, Device, dtypes, nn
+from tinygrad.nn import Conv2d, Linear
+
+class BatchNorm2d(nn.BatchNorm2d):
+  def __init__(self, dim:int, eps=1e-5): super().__init__(dim, eps)
+  def __call__(self, x:Tensor) -> Tensor: return super().__call__(x.float()).cast(dtypes.default_float)
 
 def channel_shuffle(x: Tensor) -> Tuple[Tensor, Tensor]:
   b, c, h, w = x.shape
@@ -37,12 +41,12 @@ class ShuffleV2Block:
     if self.stride == 1:
       x_proj, x = channel_shuffle(x)
     elif self.stride == 2:
-      x_proj = self.bn4(self.cv4(x).float()).cast(dtypes.default_float)
-      x_proj = self.bn5(self.cv5(x_proj).float()).cast(dtypes.default_float).relu()
+      x_proj = self.bn4(self.cv4(x))
+      x_proj = self.bn5(self.cv5(x_proj)).relu()
     else: raise Exception("Invalid stride", self.stride)
-    x = self.bn1(self.cv1(x).float()).cast(dtypes.default_float).relu()
-    x = self.bn2(self.cv2(x).float()).cast(dtypes.default_float)
-    x = self.bn3(self.cv3(x).float()).cast(dtypes.default_float).relu()
+    x = self.bn1(self.cv1(x)).relu()
+    x = self.bn2(self.cv2(x))
+    x = self.bn3(self.cv3(x)).relu()
     return x_proj.cat(x, dim=1)
 
 class ShuffleNetV2:
@@ -50,22 +54,26 @@ class ShuffleNetV2:
     stage_repeats = [4, 8, 4]
     stage_out_channels = [24, 48, 96, 192, 1024]
 
-    self.stage1 = [Conv2d(3, stage_out_channels[0], 3, 2, 1, bias=False), lambda x: x.float(), BatchNorm2d(stage_out_channels[0]), lambda x: x.cast(dtypes.default_float).relu()]
+    self.stage1 = [Conv2d(3, stage_out_channels[0], 3, 2, 1, bias=False), BatchNorm2d(stage_out_channels[0]), Tensor.relu]
     self.stage2 = [ShuffleV2Block(stage_out_channels[0], stage_out_channels[1], stage_out_channels[1] // 2, kernel_size=3, stride=2)]
     self.stage2 += [ShuffleV2Block(stage_out_channels[1] // 2, stage_out_channels[1], stage_out_channels[1] // 2, 3, 1) for _ in range(stage_repeats[0] - 1)]
     self.stage3 = [ShuffleV2Block(stage_out_channels[1], stage_out_channels[2], stage_out_channels[2] // 2, kernel_size=3, stride=2)]
     self.stage3 += [ShuffleV2Block(stage_out_channels[2] // 2, stage_out_channels[2], stage_out_channels[2] // 2, 3, 1) for _ in range(stage_repeats[1] - 1)]
     self.stage4 = [ShuffleV2Block(stage_out_channels[2], stage_out_channels[3], stage_out_channels[3] // 2, kernel_size=3, stride=2)]
     self.stage4 += [ShuffleV2Block(stage_out_channels[3] // 2, stage_out_channels[3], stage_out_channels[3] // 2, 3, 1) for _ in range(stage_repeats[2] - 1)]
-    self.stage5 = [Conv2d(stage_out_channels[3], stage_out_channels[4], 1, 1, 0, bias=False), lambda x: x.float(), BatchNorm2d(1024), lambda x: x.cast(dtypes.default_float).relu()]
+    self.stage5 = [Conv2d(stage_out_channels[3], stage_out_channels[4], 1, 1, 0, bias=False), BatchNorm2d(1024), Tensor.relu]
 
     # self.classifier = [Linear(stage_out_channels[4], 1000, bias=False)]
 
   def __call__(self, x: Tensor) -> Tensor:
     x = x.sequential(self.stage1).pad2d((1, 1, 1, 1)).max_pool2d(3, 2)
+    print(x.shape)
     x2 = x.sequential(self.stage2)
+    print(x2.shape)
     x3 = x2.sequential(self.stage3)
+    print(x3.shape)
     x4 = x3.sequential(self.stage4)
+    print(x4.shape)
     return x4.sequential(self.stage5)
 
 if __name__ == "__main__":
@@ -90,12 +98,12 @@ if __name__ == "__main__":
     if "stage1" in key:
       index = int(key.split(".")[2])
       if index == 1:
-        state_dict[key.replace("stage1.1", "stage1.2")] = state_dict[key]
+        state_dict[key.replace("stage1.1", "stage1.1")] = state_dict[key]
         del state_dict[key]
     if "stage5" in key:
       index = int(key.split(".")[2])
       if index == 1:
-        state_dict[key.replace("stage5.1", "stage5.2")] = state_dict[key]
+        state_dict[key.replace("stage5.1", "stage5.1")] = state_dict[key]
         del state_dict[key]
   for key in list(state_dict.keys()):
     if "branch_main" in key:

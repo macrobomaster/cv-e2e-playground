@@ -11,7 +11,7 @@ from onnx.checker import check_model
 import numpy as np
 
 from main import BASE_PATH
-from model import Model, ObjHead, PosHead, DFCAttention, EncoderBlock, Encoder, SEBlock
+from model import Model, ObjHead, PosHead, Head, Neck, SE, FFN, FFNBlock
 from shufflenet import ShuffleNetV2, ShuffleV2Block
 
 def make_Conv2d(n: Conv2d, name: str, x: str):
@@ -49,11 +49,32 @@ def make_Linear(n: Linear, name: str, x: str):
     gemm = make_node("Gemm", [x, weight.name], [name], name=name)
     return gemm, [gemm], [weight]
 
-def make_mish(name: str, x: str):
-  softplus = make_node("Softplus", [x], [name + ".softplus"], name=name + ".softplus")
-  tanh = make_node("Tanh", [softplus.output[0]], [name + ".tanh"], name=name + ".tanh")
-  mul = make_node("Mul", [x, tanh.output[0]], [name], name=name)
-  return mul, [softplus, tanh, mul], []
+def make_SE(n: SE, name: str, x: str):
+  avgpool = make_node("AveragePool", [x], [name + ".avgpool"], name=name + ".avgpool", kernel_shape=[4, 8], strides=[4, 8])
+  cv1, cv1_nodes, cv1_weights = make_Conv2d(n.cv1, name + ".cv1", avgpool.output[0])
+  relu = make_node("Relu", [cv1.output[0]], [name + ".relu"], name=name + ".relu")
+  cv2, cv2_nodes, cv2_weights = make_Conv2d(n.cv2, name + ".cv2", relu.output[0])
+  sigmoid = make_node("Sigmoid", [cv2.output[0]], [name + ".sigmoid"], name=name + ".sigmoid")
+  mul = make_node("Mul", [x, sigmoid.output[0]], [name], name=name)
+  return mul, [avgpool, *cv1_nodes, relu, *cv2_nodes, sigmoid, mul], [*cv1_weights, *cv2_weights]
+
+def make_FFNBlock(n: FFNBlock, name: str, x: str):
+  l1, l1_nodes, l1_weights = make_Linear(n.l1, name + ".l1", x)
+  r1 = make_node("Relu", [l1.output[0]], [name + ".r1"], name=name + ".r1")
+  l2, l2_nodes, l2_weights = make_Linear(n.l2, name + ".l2", r1.output[0])
+  add = make_node("Add", [x, l2.output[0]], [name], name=name)
+  r2 = make_node("Relu", [add.output[0]], [name + ".r2"], name=name + ".r2")
+  return r2, [*l1_nodes, r1, *l2_nodes, add, r2], [*l1_weights, *l2_weights]
+
+def make_FFN(n: FFN, name: str, x: str):
+  blocks, nodes, weights, input_ = [], [], [], x
+  for i, block in enumerate(n.blocks):
+    block, block_nodes, block_weights = make_FFNBlock(block, name + f".block{i}", input_)
+    blocks.append(block)
+    nodes.extend(block_nodes)
+    weights.extend(block_weights)
+    input_ = block.output[0]
+  return blocks[-1], nodes, weights
 
 def make_channel_shuffle(channels: int, height: int, width: int, name: str, x: str):
   shape1 = numpy_helper.from_array(np.array([1 * channels // 2, 2, height * width], dtype=np.int64), name + ".shape1")
@@ -68,10 +89,10 @@ def make_channel_shuffle(channels: int, height: int, width: int, name: str, x: s
   return (squeeze1, squeeze2), [reshape1, transpose1, reshape2, split, squeeze1, squeeze2], [shape1, shape2, squeeze_axis]
 
 # TODO: this is kinda hacky
-channel_to_hw = {48: 40, 96: 20, 192: 10}
+channel_to_hw = {48: (16, 32), 96: (8, 16), 192: (4, 8)}
 def make_ShuffleV2Block(n: ShuffleV2Block, name: str, x: str):
   if n.stride == 1:
-    channel_shuffle, channel_shuffle_nodes, channel_shuffle_weights = make_channel_shuffle(n.outp, channel_to_hw[n.outp], channel_to_hw[n.outp], name + ".channel_shuffle", x)
+    channel_shuffle, channel_shuffle_nodes, channel_shuffle_weights = make_channel_shuffle(n.outp, channel_to_hw[n.outp][0], channel_to_hw[n.outp][1], name + ".channel_shuffle", x)
     cv1, cv1_nodes, cv1_weights = make_Conv2d(n.cv1, name + ".cv1", channel_shuffle[1].output[0])
     bn1, bn1_nodes, bn1_weights = make_BatchNorm2d(n.bn1, name + ".bn1", cv1.output[0])
     r1 = make_node("Relu", [bn1.output[0]], [name + ".r1"], name=name + ".r1")
@@ -102,7 +123,7 @@ def make_ShuffleV2Block(n: ShuffleV2Block, name: str, x: str):
 
 def make_ShuffleNetV2(n: ShuffleNetV2, name: str, x: str):
   stage1_conv, stage1_conv_nodes, stage1_conv_weights = make_Conv2d(n.stage1[0], name + ".stage1_conv", x)
-  stage1_norm, stage1_norm_nodes, stage1_norm_weights = make_BatchNorm2d(n.stage1[2], name + ".stage1_norm", stage1_conv.output[0])
+  stage1_norm, stage1_norm_nodes, stage1_norm_weights = make_BatchNorm2d(n.stage1[1], name + ".stage1_norm", stage1_conv.output[0])
   stage1_relu = make_node("Relu", [stage1_norm.output[0]], [name + ".stage1_relu"], name=name + ".stage1_relu")
 
   max_pool = make_node("MaxPool", [stage1_relu.output[0]], [name + ".max_pool"], name=name + ".max_pool", kernel_shape=[3, 3], strides=[2, 2], pads=[1, 1, 1, 1])
@@ -132,93 +153,60 @@ def make_ShuffleNetV2(n: ShuffleNetV2, name: str, x: str):
     stage4_input = block.output[0]
 
   stage5_conv, stage5_conv_nodes, stage5_conv_weights = make_Conv2d(n.stage5[0], name + ".stage5_conv", stage4_input)
-  stage5_norm, stage5_norm_nodes, stage5_norm_weights = make_BatchNorm2d(n.stage5[2], name + ".stage5_norm", stage5_conv.output[0])
+  stage5_norm, stage5_norm_nodes, stage5_norm_weights = make_BatchNorm2d(n.stage5[1], name + ".stage5_norm", stage5_conv.output[0])
   stage5_relu = make_node("Relu", [stage5_norm.output[0]], [name + ".stage5_relu"], name=name + ".stage5_relu")
 
   return stage5_relu, [*stage1_conv_nodes, *stage1_norm_nodes, stage1_relu, max_pool, *stage2_nodes, *stage3_nodes, *stage4_nodes, *stage5_conv_nodes, *stage5_norm_nodes, stage5_relu], [*stage1_conv_weights, *stage1_norm_weights, *stage2_weights, *stage3_weights, *stage4_weights, *stage5_conv_weights, *stage5_norm_weights]
 
-def make_DFCAttention(n: DFCAttention, name: str, x: str):
-  downsample = make_node("AveragePool", [x], [name + ".downsample"], name=name + ".downsample", kernel_shape=[2, 2], strides=[2, 2])
-  cv, cv_nodes, cv_weights = make_Conv2d(n.cv, name + ".cv", downsample.output[0])
-  norm, norm_nodes, norm_weights = make_BatchNorm2d(n.norm, name + ".norm", cv.output[0])
-  hcv, hcv_nodes, hcv_weights = make_Conv2d(n.hcv, name + ".hcv", norm.output[0])
-  hnorm, hnorm_nodes, hnorm_weights = make_BatchNorm2d(n.hnorm, name + ".hnorm", hcv.output[0])
-  vcv, vcv_nodes, vcv_weights = make_Conv2d(n.vcv, name + ".vcv", hnorm.output[0])
-  vnorm, vnorm_nodes, vnorm_weights = make_BatchNorm2d(n.vnorm, name + ".vnorm", vcv.output[0])
-  sigmoid = make_node("Sigmoid", [vnorm.output[0]], [name + ".sigmoid"], name=name + ".sigmoid")
-  scales = numpy_helper.from_array(np.array([1.0, 1.0, 2.0, 2.0], dtype=np.float32), name + ".upsample_scales")
-  upsample = make_node("Resize", [sigmoid.output[0], "", scales.name], [name + ".upsample"], name=name + ".upsample", mode="nearest")
-  return upsample, [downsample, *cv_nodes, *norm_nodes, *hcv_nodes, *hnorm_nodes, *vcv_nodes, *vnorm_nodes, sigmoid, upsample], [*cv_weights, *norm_weights, *hcv_weights, *hnorm_weights, *vcv_weights, *vnorm_weights, scales]
-
-def make_EncoderBlock(n: EncoderBlock, name: str, x: str):
-  attention, attention_nodes, attention_weights = make_DFCAttention(n.attention, name + ".attention", x)
-  mul = make_node("Mul", [x, attention.output[0]], [name + ".mul"], name=name + ".mul")
-  add1 = make_node("Add", [x, mul.output[0]], [name + ".add1"], name=name + ".add1")
-  norm1, norm1_nodes, norm1_weights = make_BatchNorm2d(n.norm1, name + ".norm1", add1.output[0])
-  cv1, cv1_nodes, cv1_weights = make_Conv2d(n.cv1, name + ".cv1", norm1.output[0])
-  nl1, nl1_nodes, nl1_weights = make_mish(name + ".nl1", cv1.output[0])
-  cv2, cv2_nodes, cv2_weights = make_Conv2d(n.cv2, name + ".cv2", nl1.output[0])
-  nl2, nl2_nodes, nl2_weights = make_mish(name + ".nl2", cv2.output[0])
-  add2 = make_node("Add", [norm1.output[0], nl2.output[0]], [name + ".add2"], name=name + ".add2")
-  norm2, norm2_nodes, norm2_weights = make_BatchNorm2d(n.norm2, name + ".norm2", add2.output[0])
-  return norm2, [*attention_nodes, mul, add1, *norm1_nodes, *cv1_nodes, *nl1_nodes, *cv2_nodes, *nl2_nodes, add2, *norm2_nodes], [*attention_weights, *norm1_weights, *cv1_weights, *nl1_weights, *cv2_weights, *nl2_weights, *norm2_weights]
-
-def make_SEBlock(n: SEBlock, name: str, x: str):
-  cv1, cv1_nodes, cv1_weights = make_Conv2d(n.cv1, name + ".cv1", x)
-  relu = make_node("Relu", [cv1.output[0]], [name + ".relu"], name=name + ".relu")
-  cv2, cv2_nodes, cv2_weights = make_Conv2d(n.cv2, name + ".cv2", relu.output[0])
-  sigmoid = make_node("Sigmoid", [cv2.output[0]], [name + ".sigmoid"], name=name + ".sigmoid")
-  mul = make_node("Mul", [x, sigmoid.output[0]], [name], name=name)
-  return mul, [*cv1_nodes, relu, *cv2_nodes, sigmoid, mul], [*cv1_weights, *cv2_weights]
-
-def make_Encoder(n: Encoder, name: str, x: str):
-  encoders, encoder_nodes, encoder_weights, encoder_input = [], [], [], x
-  for i, encoder in enumerate(n.encoders):
-    encoder, encoder_nodes_, encoder_weights_ = make_EncoderBlock(encoder, name + f".encoder{i}", encoder_input)
-    encoders.append(encoder)
-    encoder_nodes.extend(encoder_nodes_)
-    encoder_weights.extend(encoder_weights_)
-    encoder_input = encoder.output[0]
-
-  se, se_nodes, se_weights = make_SEBlock(n.se, name + ".se", encoder_input)
-  nl1, nl1_nodes, nl1_weights = make_mish(name + ".nl1", se.output[0])
-  cv_out, cv_out_nodes, cv_out_weights = make_Conv2d(n.cv_out, name + ".cv_out", nl1.output[0])
-  flatten = make_node("Flatten", [cv_out.output[0]], [name + ".flatten"], name=name + ".flatten", axis=1)
-
-  return flatten, [*encoder_nodes, *se_nodes, *nl1_nodes, *cv_out_nodes, flatten], [*encoder_weights, *se_weights, *nl1_weights, *cv_out_weights]
+def make_Neck(n: Neck, name: str, x: str):
+  se, se_nodes, se_weights = make_SE(n.se, name + ".se", x)
+  conv, conv_nodes, conv_weights = make_Conv2d(n.conv, name + ".conv", se.output[0])
+  bn, bn_nodes, bn_weights = make_BatchNorm2d(n.bn, name + ".bn", conv.output[0])
+  flatten = make_node("Flatten", [bn.output[0]], [name + ".flatten"], name=name + ".flatten", axis=1)
+  proj, proj_nodes, proj_weights = make_Linear(n.proj, name + ".proj", flatten.output[0])
+  nl1 = make_node("Relu", [proj.output[0]], [name + ".nl1"], name=name + ".nl1")
+  ffn, ffn_nodes, ffn_weights = make_FFN(n.ffn, name + ".ffn", nl1.output[0])
+  return ffn, [*se_nodes, *conv_nodes, *bn_nodes, flatten, *proj_nodes, nl1, *ffn_nodes], [*se_weights, *conv_weights, *bn_weights, *proj_weights, *ffn_weights]
 
 def make_ObjHead(n: ObjHead, name: str, x: str):
-  l1, l1_nodes, l1_weights = make_Linear(n.l1, name + ".l1", x)
-  nl1, nl1_nodes, nl1_weights = make_mish(name + ".nl1", l1.output[0])
+  proj, proj_nodes, proj_weights = make_Linear(n.proj, name + ".proj", x)
+  proj_nl = make_node("Relu", [proj.output[0]], [name + ".proj_nl"], name=name + ".proj_nl")
+  l1, l1_nodes, l1_weights = make_Linear(n.l1, name + ".l1", proj_nl.output[0])
+  nl1 = make_node("Relu", [l1.output[0]], [name + ".nl1"], name=name + ".nl1")
   l2, l2_nodes, l2_weights = make_Linear(n.l2, name + ".l2", nl1.output[0])
-  sigmoid = make_node("Sigmoid", [l2.output[0]], [name + ".sigmoid"], name=name + ".sigmoid")
-  output_shape = numpy_helper.from_array(np.array([1, n.l2.weight.shape[0] // 2, 1], dtype=np.int64), name + ".output_shape")
+  add = make_node("Add", [proj_nl.output[0], l2.output[0]], [name + ".add"], name=name + ".add")
+  nl2 = make_node("Relu", [add.output[0]], [name + ".nl2"], name=name + ".nl2")
+  out, out_nodes, out_weights = make_Linear(n.out, name + ".out", nl2.output[0])
+  sigmoid = make_node("Sigmoid", [out.output[0]], [name + ".sigmoid"], name=name + ".sigmoid")
+  output_shape = numpy_helper.from_array(np.array([1, n.out.weight.shape[0] // 2, 1], dtype=np.int64), name + ".output_shape")
   reshape = make_node("Reshape", [sigmoid.output[0], output_shape.name], [name + ".reshape"], name=name + ".reshape")
-  return reshape, [*l1_nodes, *nl1_nodes, *l2_nodes, sigmoid, reshape], [*l1_weights, *nl1_weights, *l2_weights, output_shape]
+  return reshape, [*proj_nodes, proj_nl, *l1_nodes, nl1, *l2_nodes, add, nl2, *out_nodes, sigmoid, reshape], [*proj_weights, *l1_weights, *l2_weights, *out_weights, output_shape]
 
 def make_PosHead(n: PosHead, name: str, x: str):
-  l1, l1_nodes, l1_weights = make_Linear(n.l1, name + ".l1", x)
-  nl1, nl1_nodes, nl1_weights = make_mish(name + ".nl1", l1.output[0])
+  proj, proj_nodes, proj_weights = make_Linear(n.proj, name + ".proj", x)
+  proj_nl = make_node("Relu", [proj.output[0]], [name + ".proj_nl"], name=name + ".proj_nl")
+  l1, l1_nodes, l1_weights = make_Linear(n.l1, name + ".l1", proj_nl.output[0])
+  nl1 = make_node("Relu", [l1.output[0]], [name + ".nl1"], name=name + ".nl1")
   l2, l2_nodes, l2_weights = make_Linear(n.l2, name + ".l2", nl1.output[0])
-  nl2, nl2_nodes, nl2_weights = make_mish(name + ".nl2", l2.output[0])
-  l3, l3_nodes, l3_weights = make_Linear(n.l3, name + ".l3", nl2.output[0])
-  sigmoid = make_node("Sigmoid", [l3.output[0]], [name + ".sigmoid"], name=name + ".sigmoid")
-  output_shape = numpy_helper.from_array(np.array([1, n.l3.weight.shape[0] // 2, 2], dtype=np.int64), name + ".output_shape")
+  add = make_node("Add", [proj_nl.output[0], l2.output[0]], [name + ".add"], name=name + ".add")
+  nl2 = make_node("Relu", [add.output[0]], [name + ".nl2"], name=name + ".nl2")
+  out, out_nodes, out_weights = make_Linear(n.out, name + ".out", nl2.output[0])
+  sigmoid = make_node("Sigmoid", [out.output[0]], [name + ".sigmoid"], name=name + ".sigmoid")
+  output_shape = numpy_helper.from_array(np.array([1, n.out.weight.shape[0] // 2, 2], dtype=np.int64), name + ".output_shape")
   reshape = make_node("Reshape", [sigmoid.output[0], output_shape.name], [name + ".reshape"], name=name + ".reshape")
-  return reshape, [*l1_nodes, *nl1_nodes, *l2_nodes, *nl2_nodes, *l3_nodes, sigmoid, reshape], [*l1_weights, *nl1_weights, *l2_weights, *nl2_weights, *l3_weights, output_shape]
+  return reshape, [*proj_nodes, proj_nl, *l1_nodes, nl1, *l2_nodes, add, nl2, *out_nodes, sigmoid, reshape], [*proj_weights, *l1_weights, *l2_weights, *out_weights, output_shape]
+
+def make_Head(n: Head, name: str, x: str):
+  obj_head, obj_head_nodes, obj_head_weights = make_ObjHead(n.obj, name + ".obj", x)
+  pos_head, pos_head_nodes, pos_head_weights = make_PosHead(n.pos, name + ".pos", x)
+  return (obj_head, pos_head), [*obj_head_nodes, *pos_head_nodes], [*obj_head_weights, *pos_head_weights]
 
 def make_Model(model: Model, name: str, x: str):
   backbone, backbone_nodes, backbone_weights = make_ShuffleNetV2(model.backbone, name + ".backbone", x)
+  neck, neck_nodes, neck_weights = make_Neck(model.neck, name + ".neck", backbone.output[0])
+  head, head_nodes, head_weights = make_Head(model.head, name + ".head", neck.output[0])
 
-  input_conv, input_conv_nodes, input_conv_weights = make_Conv2d(model.input_conv, name + ".input_conv", backbone.output[0])
-  encdec, encdec_nodes, encdec_weights = make_Encoder(model.enc, name + ".enc", input_conv.output[0])
-
-  proj, proj_nodes, proj_weights = make_Linear(model.proj, name + ".proj", encdec.output[0])
-  proj_nl, proj_nl_nodes, proj_nl_weights = make_mish(name + ".proj_nl", proj.output[0])
-  obj_head, obj_head_nodes, obj_head_weights = make_ObjHead(model.obj_head, name + ".obj_head", proj_nl.output[0])
-  pos_head, pos_head_nodes, pos_head_weights = make_PosHead(model.pos_head, name + ".pos_head", proj_nl.output[0])
-
-  return (obj_head, pos_head), [*backbone_nodes, *input_conv_nodes, *encdec_nodes, *proj_nodes, *proj_nl_nodes, *obj_head_nodes, *pos_head_nodes], [*backbone_weights, *input_conv_weights, *encdec_weights, *proj_weights, *proj_nl_weights, *obj_head_weights, *pos_head_weights]
+  return head, [*backbone_nodes, *neck_nodes, *head_nodes], [*backbone_weights, *neck_weights, *head_weights]
 
 def make_preprocess(name: str, x: str):
   div_const = numpy_helper.from_array(np.array([255], dtype=np.float16), name + ".div_const")
@@ -233,14 +221,14 @@ if __name__ == "__main__":
     if getenv("HALFBN") == 0:
       if "norm" in key: continue
       if "bn" in key: continue
-      if "stage1.2" in key: continue
-      if "stage5.2" in key: continue
+      if "stage1.1" in key: continue
+      if "stage5.1" in key: continue
     param.assign(param.half()).realize()
 
   print(f"there are {sum(param.numel() for param in get_parameters(model)) / 1e6}M params") # type: ignore
   print(f"{sum(param.numel() for param in get_parameters(model.backbone)) / 1e6}M params are from the backbone") # type: ignore
 
-  x = make_tensor_value_info("x", TensorProto.FLOAT16, [1, 320, 320, 3])
+  x = make_tensor_value_info("x", TensorProto.FLOAT16, [1, 128, 256, 3])
   x_obj = make_tensor_value_info("x_obj", TensorProto.FLOAT16, [1, 1, 1])
   x_pos = make_tensor_value_info("x_pos", TensorProto.FLOAT16, [1, 1, 2])
 
