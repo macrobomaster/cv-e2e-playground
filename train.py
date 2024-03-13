@@ -17,7 +17,7 @@ WARMUP_STEPS = 100
 WARMPUP_LR = 0.0001
 START_LR = 0.005
 END_LR = 0.0001
-EPOCHS = 5
+EPOCHS = 10
 STEPS_PER_EPOCH = len(preprocessed_train_files)//BS
 
 def pseudo_huber_loss(pred: Tensor, y: Tensor, delta: float = 1.0): return ((delta*delta) * ((1 + ((pred - y) / delta).square()).sqrt() - 1)).mean()
