@@ -87,7 +87,7 @@ if __name__ == "__main__":
     obj, pos = model(img)
     return obj[0, 0].float().realize(), pos[0, 0].float().realize()
 
-  # cap = cv2.VideoCapture("2743.mp4")
+  # cap = cv2.VideoCapture("2744.mp4")
   cap = cv2.VideoCapture(1)
 
   st = time.perf_counter()
@@ -97,7 +97,7 @@ if __name__ == "__main__":
       # frame = cap_queue.get()
 
       ret, frame = cap.read()
-      if not ret: break
+      if not ret: cap.set(cv2.CAP_PROP_POS_FRAMES, 0); continue
       # convert to rgb
       frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
       # resize and pad
@@ -128,4 +128,4 @@ if __name__ == "__main__":
       key = cv2.waitKey(1)
       if key == ord("q"): break
 
-      time.sleep(0.05)
+      time.sleep(0.01)
