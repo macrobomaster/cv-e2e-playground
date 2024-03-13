@@ -12,18 +12,18 @@ from main import BASE_PATH
 IMG_SIZE_W = 256
 IMG_SIZE_H = 128
 DUPE_COUNT = 10
-NON_DETECTED_RATIO = 0.6
-TOTAL_COUNT = 10000
+NON_DETECTED_RATIO = 0.5
+TOTAL_COUNT = 100000
 
 PIPELINE = A.Compose([
   A.Perspective(p=0.25),
   A.ShiftScaleRotate(shift_limit=0.2, scale_limit=0.1, rotate_limit=10, border_mode=cv2.BORDER_CONSTANT, value=0, p=0.25),
   A.OneOf([
-    A.RandomCrop(IMG_SIZE_H, IMG_SIZE_W, p=0.2),
+    A.RandomCrop(IMG_SIZE_H, IMG_SIZE_W, p=0.4),
     A.Compose([
       A.LongestMaxSize(max_size=IMG_SIZE_W, p=1),
       A.RandomCrop(IMG_SIZE_H, IMG_SIZE_W, p=1)
-    ], p=0.8),
+    ], p=0.6),
   ], p=1),
   A.RandomBrightnessContrast(brightness_limit=0.2, contrast_limit=0.2, p=0.5),
   A.HueSaturationValue(hue_shift_limit=5, sat_shift_limit=30, val_shift_limit=20, p=0.5),
