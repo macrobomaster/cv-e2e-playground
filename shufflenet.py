@@ -67,13 +67,9 @@ class ShuffleNetV2:
 
   def __call__(self, x: Tensor) -> Tensor:
     x = x.sequential(self.stage1).pad2d((1, 1, 1, 1)).max_pool2d(3, 2)
-    print(x.shape)
     x2 = x.sequential(self.stage2)
-    print(x2.shape)
     x3 = x2.sequential(self.stage3)
-    print(x3.shape)
     x4 = x3.sequential(self.stage4)
-    print(x4.shape)
     return x4.sequential(self.stage5)
 
 if __name__ == "__main__":
