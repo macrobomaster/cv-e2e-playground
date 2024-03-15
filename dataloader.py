@@ -43,6 +43,7 @@ def loader_process(q_in:Queue, q_out:Queue, X:Tensor, Y:Tensor):
       Y[idx].contiguous().realize().lazydata.realized.as_buffer(force_zero_copy=True)[:] = struct.pack("<ffff", detected, x, y, color)
 
       q_out.put(idx)
+    q_out.put(None)
 
 def batch_load(bs:int=32):
   BATCH_COUNT = len(preprocessed_train_files) // bs
@@ -53,11 +54,13 @@ def batch_load(bs:int=32):
       file = preprocessed_train_files[next(gen)]
       q_in.put((idx, file))
 
+  running = True
   class Cookie:
     def __init__(self, num): self.num = num
     def __del__(self):
-      try: enqueue_batch(self.num)
-      except StopIteration: pass
+      if running:
+        try: enqueue_batch(self.num)
+        except StopIteration: pass
 
   gotten = [0]*BATCH_COUNT
   def receive_batch():
@@ -88,8 +91,13 @@ def batch_load(bs:int=32):
 
     for _ in range(0, len(preprocessed_train_files)//bs): yield receive_batch()
   finally:
+    running = False
     for _ in procs: q_in.put(None)
-    for p in procs: p.join()
+    q_in.close()
+    for _ in procs:
+      while q_out.get() is not None: pass
+    q_out.close()
+    for p in procs: p.terminate()
     X_shm.close()
     X_shm.unlink()
     Y_shm.close()

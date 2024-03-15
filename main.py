@@ -77,8 +77,8 @@ if __name__ == "__main__":
     obj, pos = model(img)
     return obj[0, 0].float().realize(), pos[0, 0].float().realize()
 
-  # cap = cv2.VideoCapture("2744.mp4")
-  cap = cv2.VideoCapture(1)
+  cap = cv2.VideoCapture("2744.mp4")
+  # cap = cv2.VideoCapture(1)
 
   st = time.perf_counter()
   with Context(BEAM=4):

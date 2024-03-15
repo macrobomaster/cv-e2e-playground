@@ -4,7 +4,6 @@ from tinygrad import Device, dtypes, Tensor, GlobalCounters
 from tinygrad import TinyJit
 from tinygrad.nn.optim import SGD
 from tinygrad.nn.state import get_parameters, get_state_dict, load_state_dict, safe_load, safe_save
-from tinygrad.helpers import Context
 from tqdm import tqdm
 import wandb
 

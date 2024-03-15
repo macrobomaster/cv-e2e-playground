@@ -2,6 +2,9 @@ from tinygrad.nn import Conv2d, Linear
 from tinygrad import Tensor, dtypes
 
 from shufflenet import ShuffleNetV2, BatchNorm2d
+from ghostnet import GhostNetV2
+
+def hardsigmoid(x: Tensor) -> Tensor: return (x + 3).relu6() / 6
 
 class FFNBlock:
   def __init__(self, dim, e=2):
@@ -23,7 +26,7 @@ class SE:
   def __call__(self, x: Tensor):
     xx = x.mean((2, 3), keepdim=True)
     xx = self.cv1(xx).relu()
-    xx = self.cv2(xx).sigmoid()
+    xx = hardsigmoid(self.cv2(xx))
     return x * xx
 
 class ObjHead:
@@ -74,6 +77,7 @@ class Head:
 class Model:
   def __init__(self):
     self.backbone = ShuffleNetV2()
+    # self.backbone = GhostNetV2()
     self.neck = Neck(1024, 256)
     self.head = Head(256, num_outputs=1)
 
