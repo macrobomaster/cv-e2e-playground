@@ -54,7 +54,7 @@ def make_SE(n: SE, name: str, x: str):
   cv1, cv1_nodes, cv1_weights = make_Conv2d(n.cv1, name + ".cv1", avgpool.output[0])
   relu = make_node("Relu", [cv1.output[0]], [name + ".relu"], name=name + ".relu")
   cv2, cv2_nodes, cv2_weights = make_Conv2d(n.cv2, name + ".cv2", relu.output[0])
-  sigmoid = make_node("HardSigmoid", [cv2.output[0]], [name + ".sigmoid"], name=name + ".sigmoid")
+  sigmoid = make_node("Sigmoid", [cv2.output[0]], [name + ".sigmoid"], name=name + ".sigmoid")
   mul = make_node("Mul", [x, sigmoid.output[0]], [name], name=name)
   return mul, [avgpool, *cv1_nodes, relu, *cv2_nodes, sigmoid, mul], [*cv1_weights, *cv2_weights]
 

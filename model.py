@@ -26,7 +26,7 @@ class SE:
   def __call__(self, x: Tensor):
     xx = x.mean((2, 3), keepdim=True)
     xx = self.cv1(xx).relu()
-    xx = hardsigmoid(self.cv2(xx))
+    xx = self.cv2(xx).sigmoid()
     return x * xx
 
 class ObjHead:
