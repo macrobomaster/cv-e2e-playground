@@ -1,8 +1,8 @@
 from tinygrad.nn import Conv2d, Linear
 from tinygrad import Tensor, dtypes
 
-from shufflenet import ShuffleNetV2, BatchNorm2d
-from ghostnet import GhostNetV2
+from backbones.shufflenet import ShuffleNetV2, BatchNorm2d
+from backbones.ghostnet import GhostNetV2
 
 def hardsigmoid(x: Tensor) -> Tensor: return (x + 3).relu6() / 6
 
@@ -57,13 +57,13 @@ class PosHead:
 class Neck:
   def __init__(self, cin:int, dim:int):
     self.se = SE(cin)
-    self.conv = Conv2d(cin, 32, 1, 1, 0)
+    self.conv = Conv2d(cin, 32, 1, 1, 0, bias=False)
     self.bn = BatchNorm2d(32)
     self.proj = Linear(1024, dim)
     self.ffn = FFN(dim, blocks=2)
   def __call__(self, x:Tensor) -> Tensor:
     x = self.se(x)
-    x = self.bn(self.conv(x))
+    x = self.bn(self.conv(x)).relu()
     x = x.flatten(1)
     x = self.proj(x).relu()
     return self.ffn(x)

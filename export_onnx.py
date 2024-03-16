@@ -12,7 +12,7 @@ import numpy as np
 
 from main import BASE_PATH
 from model import Model, ObjHead, PosHead, Head, Neck, SE, FFN, FFNBlock
-from shufflenet import ShuffleNetV2, ShuffleV2Block
+from backbones.shufflenet import ShuffleNetV2, ShuffleV2Block
 
 def make_Conv2d(n: Conv2d, name: str, x: str):
   weight = numpy_helper.from_array(n.weight.numpy(), name + ".weight")
@@ -162,11 +162,12 @@ def make_Neck(n: Neck, name: str, x: str):
   se, se_nodes, se_weights = make_SE(n.se, name + ".se", x)
   conv, conv_nodes, conv_weights = make_Conv2d(n.conv, name + ".conv", se.output[0])
   bn, bn_nodes, bn_weights = make_BatchNorm2d(n.bn, name + ".bn", conv.output[0])
-  flatten = make_node("Flatten", [bn.output[0]], [name + ".flatten"], name=name + ".flatten", axis=1)
+  nl1 = make_node("Relu", [bn.output[0]], [name + ".nl1"], name=name + ".nl1")
+  flatten = make_node("Flatten", [nl1.output[0]], [name + ".flatten"], name=name + ".flatten", axis=1)
   proj, proj_nodes, proj_weights = make_Linear(n.proj, name + ".proj", flatten.output[0])
-  nl1 = make_node("Relu", [proj.output[0]], [name + ".nl1"], name=name + ".nl1")
-  ffn, ffn_nodes, ffn_weights = make_FFN(n.ffn, name + ".ffn", nl1.output[0])
-  return ffn, [*se_nodes, *conv_nodes, *bn_nodes, flatten, *proj_nodes, nl1, *ffn_nodes], [*se_weights, *conv_weights, *bn_weights, *proj_weights, *ffn_weights]
+  nl2 = make_node("Relu", [proj.output[0]], [name + ".nl2"], name=name + ".nl2")
+  ffn, ffn_nodes, ffn_weights = make_FFN(n.ffn, name + ".ffn", nl2.output[0])
+  return ffn, [*se_nodes, *conv_nodes, *bn_nodes, nl1, flatten, *proj_nodes, nl2, *ffn_nodes], [*se_weights, *conv_weights, *bn_weights, *proj_weights, *ffn_weights]
 
 def make_ObjHead(n: ObjHead, name: str, x: str):
   proj, proj_nodes, proj_weights = make_Linear(n.proj, name + ".proj", x)

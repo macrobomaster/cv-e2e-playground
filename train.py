@@ -4,7 +4,7 @@ from tinygrad import Device, dtypes, Tensor, GlobalCounters
 from tinygrad import TinyJit
 from tinygrad.nn.optim import SGD
 from tinygrad.nn.state import get_parameters, get_state_dict, load_state_dict, safe_load, safe_save
-from tqdm import tqdm
+from tqdm import tqdm, trange
 import wandb
 
 from model import Model
@@ -97,7 +97,7 @@ if __name__ == "__main__":
     return x.to(Device.DEFAULT), y.to(Device.DEFAULT), c
 
   steps = 0
-  for epoch in range(EPOCHS):
+  for epoch in trange(EPOCHS):
     batch_iter = iter(tqdm(batch_load(BS), total=STEPS_PER_EPOCH, desc=f"epoch {epoch}"))
     i, proc = 0, single_batch(batch_iter)
     while proc is not None:
