@@ -69,7 +69,7 @@ if __name__ == "__main__":
     if "bn" in key: continue
     if "stage1.1" in key: continue
     if "stage5.1" in key: continue
-    param.assign(param.half()).realize()
+    param.replace(param.half()).realize()
   smoother_x, smoother_y = Smoother(), Smoother()
 
   @TinyJit

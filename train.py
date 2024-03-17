@@ -35,7 +35,7 @@ def train_step(x, y, lr):
   pred = model(x)
   loss = loss_fn(pred, y)
 
-  optim.lr.assign(lr+1-1)
+  optim.lr.assign(lr)
   optim.zero_grad()
   loss.backward()
   optim.step()
@@ -50,18 +50,6 @@ def get_lr(step:int) -> float:
     if step >= WARMUP_STEPS: warming_up = False
   else: lr = END_LR + 0.5 * (START_LR - END_LR) * (1 + math.cos(((step - WARMUP_STEPS) / ((EPOCHS * STEPS_PER_EPOCH) - WARMUP_STEPS)) * math.pi))
   return lr
-
-class ModelEMA:
-  def __init__(self, model):
-    self.model = Model()
-    for ep, p in zip(get_state_dict(self.model).values(), get_state_dict(model).values()):
-      ep.requires_grad = False
-      ep.assign(p)
-
-  @TinyJit
-  def update(self, net, alpha):
-    for ep, p in zip(get_state_dict(self.model).values(), get_state_dict(net).values()):
-      ep.assign(alpha * ep.detach() + (1 - alpha) * p.detach()).realize()
 
 if __name__ == "__main__":
   Tensor.no_grad = False
@@ -86,8 +74,6 @@ if __name__ == "__main__":
 
   # state_dict = safe_load(str(BASE_PATH / "model.safetensors"))
   # load_state_dict(model, state_dict)
-
-  model_ema = ModelEMA(model)
 
   parameters = get_parameters(model)
   optim = SGD(parameters, momentum=0.9, nesterov=True, weight_decay=1e-5)
@@ -131,14 +117,6 @@ if __name__ == "__main__":
       proc, next_proc = next_proc, None
       i += 1
       steps += 1
-
-      # # update EMA
-      # if step >= 400 and step % 5 == 0: model_ema.update(model, Tensor([0.998]))
-      #
-      # # sema
-      # if step >= 600 and step % 200 == 0:
-      #   for p, ep in zip(get_state_dict(model).values(), get_state_dict(model_ema.model).values()):
-      #     p.assign(ep.detach()).realize()
 
     if epoch != EPOCHS - 1: safe_save(get_state_dict(model), str(BASE_PATH / f"intermediate/model_{epoch}.safetensors"))
   safe_save(get_state_dict(model), str(BASE_PATH / f"model.safetensors"))
