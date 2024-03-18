@@ -72,7 +72,7 @@ class Head:
   def __init__(self, dim:int, num_outputs:int):
     self.obj = ObjHead(dim, 64, num_outputs)
     self.pos = PosHead(dim, 64, num_outputs)
-  def __call__(self, x:Tensor) -> tuple[Tensor, Tensor]: return self.obj(x), self.pos(x)
+  def __call__(self, x:Tensor) -> Tuple[Tensor, Tensor]: return self.obj(x), self.pos(x)
 
 class Model:
   def __init__(self):
