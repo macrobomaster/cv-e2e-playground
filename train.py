@@ -1,4 +1,5 @@
 import math, time
+from typing import Tuple
 
 from tinygrad import Device, dtypes, Tensor, GlobalCounters
 from tinygrad import TinyJit

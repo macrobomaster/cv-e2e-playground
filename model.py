@@ -1,3 +1,5 @@
+from typing import Tuple
+
 from tinygrad.nn import Conv2d, Linear
 from tinygrad import Tensor, dtypes
 
