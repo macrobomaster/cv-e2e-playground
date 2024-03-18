@@ -91,17 +91,6 @@ if __name__ == "__main__":
       state_dict[key.replace("conv_last", "stage5")] = state_dict[key]
       del state_dict[key]
   for key in list(state_dict.keys()):
-    if "stage1" in key:
-      index = int(key.split(".")[2])
-      if index == 1:
-        state_dict[key.replace("stage1.1", "stage1.1")] = state_dict[key]
-        del state_dict[key]
-    if "stage5" in key:
-      index = int(key.split(".")[2])
-      if index == 1:
-        state_dict[key.replace("stage5.1", "stage5.1")] = state_dict[key]
-        del state_dict[key]
-  for key in list(state_dict.keys()):
     if "branch_main" in key:
       index = int(key.split(".")[4])
       if index == 0:
@@ -152,10 +141,10 @@ if __name__ == "__main__":
   for key in list(state_dict.keys()):
     if "classifier" in key: continue
     print(f"Loading {key}...")
-    get_child(net, key.replace("module.", "")).assign(state_dict[key].to(Device.DEFAULT)).realize()
+    get_child(net, key.replace("module.", "")).replace(state_dict[key].to(Device.DEFAULT)).realize()
 
   for param in get_parameters(state_dict):
-    param.assign(param.cast(dtypes.float32)).realize()
+    param.replace(param.cast(dtypes.float32)).realize()
 
   # verification
   # import cv2, ast
