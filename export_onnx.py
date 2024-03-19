@@ -224,7 +224,7 @@ if __name__ == "__main__":
       if "bn" in key: continue
       if "stage1.1" in key: continue
       if "stage5.1" in key: continue
-    param.assign(param.half()).realize()
+    param.replace(param.half()).realize()
 
   print(f"there are {sum(param.numel() for param in get_parameters(model)) / 1e6}M params") # type: ignore
   print(f"{sum(param.numel() for param in get_parameters(model.backbone)) / 1e6}M params are from the backbone") # type: ignore
