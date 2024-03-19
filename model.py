@@ -4,9 +4,6 @@ from tinygrad.nn import Conv2d, Linear
 from tinygrad import Tensor, dtypes
 
 from backbones.shufflenet import ShuffleNetV2, BatchNorm2d
-from backbones.ghostnet import GhostNetV2
-
-def hardsigmoid(x: Tensor) -> Tensor: return (x + 3).relu6() / 6
 
 class FFNBlock:
   def __init__(self, dim, e=2):
