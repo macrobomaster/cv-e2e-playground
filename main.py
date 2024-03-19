@@ -77,7 +77,7 @@ if __name__ == "__main__":
     obj, pos = model(img)
     return obj[0, 0].float().realize(), pos[0, 0].float().realize()
 
-  cap = cv2.VideoCapture("2744.mp4")
+  cap = cv2.VideoCapture("2743.mp4")
   # cap = cv2.VideoCapture(1)
 
   st = time.perf_counter()
@@ -118,4 +118,4 @@ if __name__ == "__main__":
       key = cv2.waitKey(1)
       if key == ord("q"): break
 
-      time.sleep(0.01)
+      time.sleep(0.02)

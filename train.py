@@ -3,7 +3,7 @@ from typing import Tuple
 
 from tinygrad import Device, dtypes, Tensor, GlobalCounters
 from tinygrad import TinyJit
-from tinygrad.nn.optim import SGD
+from tinygrad.nn.optim import AdamW
 from tinygrad.nn.state import get_parameters, get_state_dict, load_state_dict, safe_load, safe_save
 from tqdm import tqdm, trange
 import wandb
@@ -77,7 +77,7 @@ if __name__ == "__main__":
   # load_state_dict(model, state_dict)
 
   parameters = get_parameters(model)
-  optim = SGD(parameters, momentum=0.9, nesterov=True, weight_decay=1e-5)
+  optim = AdamW(parameters, wd=1e-5)
 
   def single_batch(iter):
     x, y, c = next(iter)
